@@ -207,13 +207,13 @@ def _render_title_frame(language: str, mode: str, total_steps: int) -> np.ndarra
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.axis("off")
 
-    ax.text(0.5, 0.62, "🔍 TraceX",
+    ax.text(0.5, 0.62, "TraceX",
             ha="center", va="center", fontsize=52,
             fontweight="bold", color=VIOLET)
     ax.text(0.5, 0.47, "Code Execution Visualizer",
             ha="center", va="center", fontsize=18, color=TEXT2)
     ax.text(0.5, 0.37,
-            f"{language}  •  {mode} Mode  •  {total_steps} Steps",
+            f"{language}  |  {mode} Mode  |  {total_steps} Steps",
             ha="center", va="center", fontsize=13, color=TEXT3)
 
     # Decorative line
@@ -233,7 +233,7 @@ def _render_end_frame(stdout_final: str, error: str | None) -> np.ndarray:
     ax.axis("off")
 
     if error:
-        ax.text(0.5, 0.65, "💥 Runtime Error", ha="center",
+        ax.text(0.5, 0.65, "Runtime Error", ha="center",
                 fontsize=26, color=ROSE, fontweight="bold")
         lines = error.strip().splitlines()[-6:]
         for i, ln in enumerate(lines):
@@ -241,7 +241,7 @@ def _render_end_frame(stdout_final: str, error: str | None) -> np.ndarray:
                     ha="center", fontsize=9, color=TEXT2,
                     fontfamily="monospace")
     else:
-        ax.text(0.5, 0.65, "✅ Execution Complete", ha="center",
+        ax.text(0.5, 0.65, "Execution Complete", ha="center",
                 fontsize=26, color=GREEN, fontweight="bold")
         if stdout_final.strip():
             ax.text(0.5, 0.55, "Program Output:", ha="center",
@@ -255,12 +255,145 @@ def _render_end_frame(stdout_final: str, error: str | None) -> np.ndarray:
             ax.text(0.5, 0.50, "(No stdout output)", ha="center",
                     fontsize=11, color=TEXT3)
 
-    ax.text(0.5, 0.12, "🔍 TraceX  •  Code Execution Visualizer",
+    ax.text(0.5, 0.12, "TraceX  |  Code Execution Visualizer",
             ha="center", fontsize=9, color=TEXT3)
 
     frame_rgb = _fig_to_rgb(fig)
     plt.close(fig)
     return frame_rgb
+
+
+def _render_syntax_error_frame(
+    source_lines: list[str],
+    error_line: int,
+    error_msg: str,
+    language: str,
+    frame_idx: int,
+    total_frames: int,
+) -> np.ndarray:
+    """One frame of the syntax-error video — pulsing red highlight on bad line."""
+    fig = plt.figure(figsize=(16, 9), dpi=100, facecolor=BG)
+    gs  = GridSpec(2, 2, figure=fig,
+                   left=0.03, right=0.97, top=0.91, bottom=0.08,
+                   hspace=0.25, wspace=0.06, height_ratios=[2.5, 1])
+    ax_code = fig.add_subplot(gs[:, 0])
+    ax_err  = fig.add_subplot(gs[0, 1])
+    ax_hint = fig.add_subplot(gs[1, 1])
+
+    for ax in (ax_code, ax_err, ax_hint):
+        ax.set_facecolor(BG3)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(BORDER); sp.set_linewidth(1.2)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+    # Title bar
+    fig.text(0.03, 0.965, "TraceX", fontsize=16, fontweight="bold", color=VIOLET, va="center")
+    fig.text(0.5,  0.965, f"Syntax Error  |  {language}",
+             fontsize=10, color=ROSE, ha="center", va="center", fontweight="bold")
+    fig.text(0.97, 0.965, f"Frame {frame_idx}/{total_frames}",
+             fontsize=9, color=TEXT3, ha="right", va="center")
+
+    # Animated red progress bar
+    bar_ax = fig.add_axes([0.03, 0.945, 0.94, 0.008])
+    bar_ax.set_facecolor(BG2); bar_ax.set_xlim(0, 1); bar_ax.set_ylim(0, 1)
+    bar_ax.axvspan(0, frame_idx / max(total_frames, 1), ymin=0, ymax=1, color=ROSE, alpha=0.85)
+    bar_ax.axis("off")
+
+    # Code panel
+    ax_code.set_title("  Source Code", loc="left", fontsize=9,
+                      color=TEXT3, pad=6, fontweight="bold")
+    ax_code.set_xlim(0, 1)
+    err_ln = max(error_line, 1)
+    visible_start = max(0, err_ln - 10)
+    visible_lines = source_lines[visible_start: visible_start + 22]
+    n = len(visible_lines)
+    ax_code.set_ylim(-0.5, max(n - 0.5, 0.5))
+
+    for i, text in enumerate(visible_lines):
+        abs_ln = visible_start + i + 1
+        is_err = (abs_ln == err_ln)
+        if is_err:
+            # Pulsing alpha
+            alpha = 0.18 + 0.12 * abs((frame_idx % 8) - 4) / 4
+            ax_code.axhspan(n-1-i - 0.48, n-1-i + 0.48, color=ROSE, alpha=alpha)
+            ax_code.plot([0, 0.015], [n-1-i, n-1-i], color=ROSE, lw=4, solid_capstyle="round")
+
+        ax_code.text(0.018, n-1-i, f"{abs_ln:>3}", fontsize=7.5,
+                     color=ROSE if is_err else TEXT3, va="center",
+                     fontfamily="monospace", fontweight="bold" if is_err else "normal")
+        ax_code.text(0.065, n-1-i, text[:72], fontsize=8,
+                     color=ROSE if is_err else TEXT2, va="center",
+                     fontfamily="monospace", fontweight="bold" if is_err else "normal")
+
+    # Error message panel
+    ax_err.set_title("  Syntax Error", loc="left", fontsize=9, color=ROSE, pad=6, fontweight="bold")
+    ax_err.axis("off")
+    ax_err.axhspan(0.35, 0.90, xmin=0.03, xmax=0.97, color=ROSE, alpha=0.08)
+    ax_err.plot([0.03, 0.97], [0.90, 0.90], color=ROSE, lw=1.2, transform=ax_err.transAxes)
+    ax_err.plot([0.03, 0.97], [0.35, 0.35], color=ROSE, lw=1.2, transform=ax_err.transAxes)
+    ax_err.text(0.5, 0.80,
+                f"Line {err_ln}" if err_ln > 0 else "Unknown line",
+                ha="center", va="center", fontsize=22, color=ROSE,
+                fontweight="bold", transform=ax_err.transAxes)
+    ax_err.text(0.5, 0.60,
+                error_msg[:65] if len(error_msg) > 65 else error_msg,
+                ha="center", va="center", fontsize=10, color=TEXT,
+                fontfamily="monospace", transform=ax_err.transAxes)
+    if len(error_msg) > 65:
+        ax_err.text(0.5, 0.46, error_msg[65:130],
+                    ha="center", va="center", fontsize=9, color=TEXT2,
+                    fontfamily="monospace", transform=ax_err.transAxes)
+    ax_err.text(0.5, 0.18, "Execution stopped  |  Fix the error and try again",
+                ha="center", va="center", fontsize=8.5, color=AMBER,
+                transform=ax_err.transAxes)
+
+    # Common fixes hint panel
+    ax_hint.set_title("  Quick Fixes", loc="left", fontsize=9, color=TEXT3, pad=6, fontweight="bold")
+    ax_hint.axis("off")
+    for i, hint in enumerate([
+        "Check for missing colons  ( if x:  /  for i in ...: )",
+        "Check matching brackets  [ ] { } ( )",
+        "Check indentation — Python is whitespace-sensitive",
+        "Check for missing quotes around strings",
+    ]):
+        ax_hint.text(0.04, 0.78 - i * 0.22, f"• {hint}",
+                     fontsize=8, color=TEXT2, fontfamily="monospace",
+                     transform=ax_hint.transAxes, va="center")
+
+    frame_rgb = _fig_to_rgb(fig)
+    plt.close(fig)
+    return frame_rgb
+
+
+def generate_syntax_error_video(
+    source: str,
+    language: str,
+    error_line: int,
+    error_msg: str,
+    output_path: str | None = None,
+) -> str:
+    """
+    Generate a 6-second MP4 showing the syntax error with animated
+    pulsing red highlight on the offending line.
+    """
+    if output_path is None:
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        output_path = tmp.name
+        tmp.close()
+
+    source_lines   = source.splitlines()
+    total_frames   = FPS * 6    # 6 seconds
+
+    all_frames = [
+        _render_syntax_error_frame(
+            source_lines, error_line, error_msg, language, idx, total_frames
+        )
+        for idx in range(1, total_frames + 1)
+    ]
+
+    iio.imwrite(output_path, all_frames, fps=FPS,
+                codec="libx264", quality=8, macro_block_size=16)
+    return output_path
 
 
 def generate_video(

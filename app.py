@@ -17,6 +17,8 @@ from components.input_parser import (
     build_injected_source,
     FunctionSignature,
 )
+from components.syntax_checker import check_syntax
+from components.video_renderer import generate_syntax_error_video
 
 # ── Page Config ───────────────────────────────────────────────
 st.set_page_config(
@@ -278,9 +280,12 @@ with right_col:
 
     with st.container():
         st.markdown('<div class="editor-wrapper">', unsafe_allow_html=True)
+        # NOTE: Do NOT pass value= when using key= — Streamlit manages
+        # the widget value via st.session_state.code_textarea directly.
+        if "code_textarea" not in st.session_state:
+            st.session_state.code_textarea = st.session_state.code
         updated_code = st.text_area(
             label="code_editor",
-            value=st.session_state.code,
             height=420,
             key="code_textarea",
             label_visibility="collapsed",
@@ -396,6 +401,35 @@ if st.session_state.run_trigger:
         st.warning("⚠️ Editor is empty. Write some Python code first.")
     else:
         st.markdown("---")
+
+        # ── Step 0: Syntax Check ─────────────────────────────
+        syn_err = check_syntax(code, st.session_state.language)
+        if syn_err:
+            st.error(
+                f"🚫 **Syntax Error** on **line {syn_err.line}**: `{syn_err.message}`\n\n"
+                f"Fix the error in the editor, then click Trace again."
+            )
+            with st.status("🎬 Generating syntax-error video…", expanded=True) as se_status:
+                st.write(f"❌ Syntax error at line {syn_err.line}: {syn_err.message}")
+                try:
+                    out_dir = os.path.join(os.path.dirname(__file__), "assets")
+                    os.makedirs(out_dir, exist_ok=True)
+                    out_path = os.path.join(out_dir, "tracex_output.mp4")
+                    generate_syntax_error_video(
+                        source=code,
+                        language=st.session_state.language,
+                        error_line=syn_err.line,
+                        error_msg=syn_err.message,
+                        output_path=out_path,
+                    )
+                    st.session_state.video_path = out_path
+                    st.session_state.trace_error = f"SyntaxError at line {syn_err.line}: {syn_err.message}"
+                    st.write("✅ Error video ready.")
+                    se_status.update(label="🚫 Syntax Error — video generated.", state="error")
+                except Exception as ve:
+                    st.error(f"Video render failed: {ve}")
+                    se_status.update(label="Video generation failed.", state="error")
+            st.stop()
 
         # ── Inject test call for LeetCode mode ───────────────
         run_source = code
