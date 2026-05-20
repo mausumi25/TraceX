@@ -85,12 +85,17 @@ with st.sidebar:
 
     if st.button("🗑️  Clear Editor", key="sidebar_clear"):
         st.session_state.code = ""
+        st.session_state.code_textarea = ""   # sync widget key
         st.session_state.video_path = None
+        st.session_state.leet_inputs = {}
         st.rerun()
 
     if st.button("🔄  Load Example", key="sidebar_example"):
-        st.session_state.code = _default_code(st.session_state.language, st.session_state.exec_mode)
+        new_code = _default_code(st.session_state.language, st.session_state.exec_mode)
+        st.session_state.code = new_code
+        st.session_state.code_textarea = new_code  # sync widget key
         st.session_state.video_path = None
+        st.session_state.leet_inputs = {}
         st.rerun()
 
     st.markdown('<div class="sidebar-divider"></div>', unsafe_allow_html=True)
@@ -151,9 +156,12 @@ with left_col:
         meta = LANGUAGE_META[lang]
         with lang_cols[idx]:
             if st.button(f"{meta['icon']}\n{lang}", key=f"lang_{lang}", use_container_width=True):
+                new_code = _default_code(lang, st.session_state.exec_mode)
                 st.session_state.language = lang
-                st.session_state.code = _default_code(lang, st.session_state.exec_mode)
+                st.session_state.code = new_code
+                st.session_state.code_textarea = new_code
                 st.session_state.video_path = None
+                st.session_state.leet_inputs = {}
                 st.rerun()
 
     st.markdown(
@@ -175,16 +183,22 @@ with left_col:
     with ma:
         if st.button("🖥️ Full Program", key="mode_full", use_container_width=True,
                      type="primary" if st.session_state.exec_mode == "Full Program" else "secondary"):
+            new_code = _default_code(st.session_state.language, "Full Program")
             st.session_state.exec_mode = "Full Program"
-            st.session_state.code = _default_code(st.session_state.language, "Full Program")
+            st.session_state.code = new_code
+            st.session_state.code_textarea = new_code
             st.session_state.video_path = None
+            st.session_state.leet_inputs = {}
             st.rerun()
     with mb:
         if st.button("🏆 LeetCode", key="mode_leet", use_container_width=True,
                      type="primary" if st.session_state.exec_mode == "LeetCode" else "secondary"):
+            new_code = _default_code(st.session_state.language, "LeetCode")
             st.session_state.exec_mode = "LeetCode"
-            st.session_state.code = _default_code(st.session_state.language, "LeetCode")
+            st.session_state.code = new_code
+            st.session_state.code_textarea = new_code
             st.session_state.video_path = None
+            st.session_state.leet_inputs = {}
             st.rerun()
 
     mode = st.session_state.exec_mode
