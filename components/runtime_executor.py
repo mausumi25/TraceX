@@ -49,6 +49,177 @@ def _run(cmd: list[str], timeout: int = 10, stdin: str = "") -> tuple[str, str, 
         return "", f"Compiler/runtime not found: {e}", -1, 0.0
 
 
+# ── LeetCode normalisers ───────────────────────────────────────
+
+def _has_main(source: str) -> bool:
+    """Return True if the source already contains a main() entry point."""
+    import re
+    return bool(re.search(r'\bmain\s*\(', source))
+
+
+def _normalize_cpp_leetcode(source: str) -> str:
+    """
+    If the C++ source is LeetCode-style (class Solution, no main),
+    inject the standard headers and a main() that calls twoSum-style method.
+    Supports: twoSum, maxProfit, longestCommonPrefix, and generic void/int methods.
+    """
+    import re
+    if _has_main(source):
+        return source
+
+    # Detect method signature inside Solution
+    # Pattern: returnType methodName(params)
+    method_pat = re.search(
+        r'(?:public\s+)?'
+        r'(vector\s*<[^>]+>|string|int|bool|double|float|long|void)\s+'
+        r'(\w+)\s*\(([^)]*)\)',
+        source
+    )
+
+    headers = """\
+#include <bits/stdc++.h>
+using namespace std;
+"""
+    # Build a minimal main based on detected method
+    main_block = ""
+    if method_pat:
+        ret_type  = method_pat.group(1).strip()
+        func_name = method_pat.group(2).strip()
+        params    = method_pat.group(3).strip()
+
+        # Build argument list with sample values
+        args = []
+        for param in params.split(','):
+            param = param.strip()
+            if not param:
+                continue
+            if 'vector<int>' in param:
+                args.append('nums')
+            elif 'vector<string>' in param:
+                args.append('strs')
+            elif 'string' in param:
+                args.append('s')
+            elif 'int' in param:
+                args.append('target')
+            elif 'double' in param or 'float' in param:
+                args.append('0.0')
+            else:
+                args.append('0')
+
+        arg_str = ', '.join(args)
+
+        # Declare sample inputs
+        decls = []
+        for param in params.split(','):
+            param = param.strip()
+            if not param:
+                continue
+            if 'vector<int>' in param:
+                decls.append('    vector<int> nums = {2, 7, 11, 15};')
+            elif 'vector<string>' in param:
+                decls.append('    vector<string> strs = {"flower","flow","flight"};')
+            elif 'string' in param and '&' in param:
+                decls.append('    string s = "anagram";')
+            elif 'int' in param:
+                decls.append('    int target = 9;')
+
+        decls_str = '\n'.join(decls)
+
+        if ret_type == 'void':
+            main_block = f"""
+int main() {{
+    Solution sol;
+{decls_str}
+    sol.{func_name}({arg_str});
+    return 0;
+}}"""
+        elif 'vector' in ret_type:
+            main_block = f"""
+int main() {{
+    Solution sol;
+{decls_str}
+    auto res = sol.{func_name}({arg_str});
+    cout << "[";
+    for (int i = 0; i < (int)res.size(); i++) {{
+        if (i) cout << ", ";
+        cout << res[i];
+    }}
+    cout << "]" << endl;
+    return 0;
+}}"""
+        else:
+            main_block = f"""
+int main() {{
+    Solution sol;
+{decls_str}
+    auto res = sol.{func_name}({arg_str});
+    cout << res << endl;
+    return 0;
+}}"""
+    else:
+        main_block = "\nint main() { Solution sol; return 0; }\n"
+
+    # Prepend headers if not already present
+    if '#include' not in source:
+        return headers + "\n" + source + "\n" + main_block
+    return source + "\n" + main_block
+
+
+def _normalize_java_leetcode(source: str) -> str:
+    """
+    If Java source has class Solution but no main(),
+    wrap it so javac can compile it.
+    """
+    import re
+    if _has_main(source):
+        return source
+
+    # Detect method name
+    method_pat = re.search(
+        r'public\s+(?:int\[\]|List<Integer>|String|int|boolean|double|void)\s+(\w+)\s*\(',
+        source
+    )
+    func_name = method_pat.group(1) if method_pat else "twoSum"
+
+    # Inject main into Solution class body (before last closing brace)
+    main_inject = f"""
+    public static void main(String[] args) {{
+        Solution sol = new Solution();
+        int[] nums = {{2, 7, 11, 15}};
+        int[] result = sol.{func_name}(nums, 9);
+        System.out.println(java.util.Arrays.toString(result));
+    }}
+"""
+    # Insert before the last closing brace of the class
+    last_brace = source.rfind('}')
+    if last_brace != -1:
+        return source[:last_brace] + main_inject + source[last_brace:]
+    return source
+
+
+def _normalize_c_leetcode(source: str) -> str:
+    """C LeetCode style usually already has main in the snippet; add one if missing."""
+    if _has_main(source):
+        return source
+
+    headers = "#include <stdio.h>\n#include <stdlib.h>\n"
+    main_block = """
+int main() {
+    int nums[] = {2, 7, 11, 15};
+    int returnSize;
+    int* res = twoSum(nums, 4, 9, &returnSize);
+    printf("[%d, %d]\\n", res[0], res[1]);
+    free(res);
+    return 0;
+}
+"""
+    if '#include' not in source:
+        return headers + "\n" + source + main_block
+    return source + main_block
+
+
+
+
 def _make_step(
     step_n: int,
     phase: str,
@@ -130,6 +301,7 @@ def _build_output_timeline(
 
 def run_c(source: str, stdin: str = "") -> ExecutionResult:
     """Compile and run C code with gcc."""
+    source = _normalize_c_leetcode(source)   # inject main() if LeetCode-style
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "main.c")
         exe_path = os.path.join(tmpdir, "main.exe")
@@ -165,6 +337,7 @@ def run_c(source: str, stdin: str = "") -> ExecutionResult:
 
 def run_cpp(source: str, stdin: str = "") -> ExecutionResult:
     """Compile and run C++ code with g++."""
+    source = _normalize_cpp_leetcode(source)  # inject headers + main() if LeetCode-style
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "main.cpp")
         exe_path = os.path.join(tmpdir, "main.exe")
@@ -205,6 +378,7 @@ def _detect_java_class(source: str) -> str:
 
 def run_java(source: str, stdin: str = "") -> ExecutionResult:
     """Compile and run Java code with javac + java."""
+    source = _normalize_java_leetcode(source)  # inject main() if LeetCode-style
     class_name = _detect_java_class(source)
 
     with tempfile.TemporaryDirectory() as tmpdir:
