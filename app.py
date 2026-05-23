@@ -19,6 +19,8 @@ from components.input_parser import (
 )
 from components.syntax_checker import check_syntax
 from components.video_renderer import generate_syntax_error_video
+from components.tracer import trace_python_code, steps_to_json
+from components.runtime_executor import run_code, SUPPORTED_LANGUAGES
 
 # ── Page Config ───────────────────────────────────────────────
 st.set_page_config(
@@ -227,21 +229,13 @@ with left_col:
 
     st.markdown("---")
 
-    # Run button — only for Python
     lang = st.session_state.language
-    can_trace = (lang == "Python")
+    can_trace = True     # all languages now supported
     run_clicked = st.button(
-        "▶  Trace & Generate Video",
+        "Run & Generate Video",
         key="run_btn",
         use_container_width=True,
-        disabled=not can_trace,
     )
-    if not can_trace:
-        st.markdown(
-            f'<div class="tooltip-card">⚠️ Live tracing supports <strong>Python</strong> only. '
-            f'{lang} support coming soon.</div>',
-            unsafe_allow_html=True,
-        )
     if run_clicked:
         st.session_state.run_trigger = True
         st.session_state.video_path  = None
@@ -463,46 +457,81 @@ if st.session_state.run_trigger:
             with st.expander("🔍 Injected Source Preview", expanded=False):
                 st.code(run_source, language="python")
 
-        # ── Step 1: Trace ────────────────────────────────────
-        with st.status("⚙️ Tracing code execution…", expanded=True) as status:
-            st.write("🔬 Running Python tracer (sys.settrace)…")
-            try:
-                from components.tracer import trace_python_code
-                steps, error = trace_python_code(run_source, max_steps=300)
-                st.write(f"✅ Captured **{len(steps)} execution steps**")
-            except Exception as e:
-                st.error(f"Tracer failed: {e}")
-                st.stop()
+        # ── Step 1: Execute / Trace ───────────────────────────
+        lang = st.session_state.language
+        with st.status(f"Running {lang}...", expanded=True) as status:
+            steps      = []
+            error      = None
+            stdout_out = ""
 
-            # ── Step 2: Render Video ─────────────────────────
-            st.write("🎬 Rendering video frames…")
+            if lang == "Python":
+                st.write("Running Python tracer (sys.settrace)...")
+                try:
+                    steps, error = trace_python_code(run_source, max_steps=500)
+                    stdout_out = steps[-1]["stdout"] if steps else ""
+                    st.write(f"Captured **{len(steps)} execution steps**")
+                except Exception as exc:
+                    st.error(f"Tracer failed: {exc}")
+                    st.stop()
+            else:
+                # C / C++ / Java / JavaScript via subprocess
+                st.write(f"Compiling and running {lang}...")
+                try:
+                    result     = run_code(code, lang)
+                    steps      = result.timeline
+                    stdout_out = result.stdout
+                    if not result.compile_ok:
+                        error = result.compile_err
+                        st.error(f"Compile error:\n```\n{error}\n```")
+                    elif result.return_code != 0:
+                        error = result.stderr
+                    st.write(
+                        f"Captured **{len(steps)} timeline steps** | "
+                        f"exit {result.return_code} | "
+                        f"{result.exec_time_ms:.1f} ms"
+                    )
+                    if stdout_out:
+                        with st.expander("Program Output", expanded=True):
+                            st.code(stdout_out, language="text")
+                except Exception as exc:
+                    import traceback as _tb
+                    st.error(f"Execution failed: {exc}")
+                    st.code(_tb.format_exc())
+                    st.stop()
+
+            # ── Save JSON timeline ────────────────────────────
+            out_dir = os.path.join(os.path.dirname(__file__), "assets")
+            os.makedirs(out_dir, exist_ok=True)
+            timeline_path = os.path.join(out_dir, "timeline.json")
+            with open(timeline_path, "w", encoding="utf-8") as jf:
+                jf.write(steps_to_json(steps))
+            st.session_state.timeline_path = timeline_path
+            st.write(f"Timeline saved — {len(steps)} steps as JSON")
+
+            # ── Step 2: Render Video ──────────────────────────
+            st.write("Rendering video frames...")
             try:
                 from components.video_renderer import generate_video
-
-                # Save to a persistent temp file in the project dir
-                out_dir = os.path.join(
-                    os.path.dirname(__file__), "assets"
-                )
-                os.makedirs(out_dir, exist_ok=True)
                 out_path = os.path.join(out_dir, "tracex_output.mp4")
-
                 generate_video(
                     steps=steps,
-                    source=code,
-                    language=st.session_state.language,
+                    source=run_source if lang == "Python" else code,
+                    language=lang,
                     mode=st.session_state.exec_mode,
                     error=error,
                     output_path=out_path,
                 )
-                st.session_state.video_path = out_path
+                st.session_state.video_path  = out_path
                 st.session_state.trace_error = error
-                st.write(f"✅ Video rendered → `tracex_output.mp4`")
-            except Exception as e:
-                st.error(f"Video render failed: {e}")
-                import traceback; st.code(traceback.format_exc())
+                st.write("Video rendered  tracex_output.mp4")
+            except Exception as exc:
+                import traceback
+                st.error(f"Video render failed: {exc}")
+                st.code(traceback.format_exc())
                 st.stop()
 
-            status.update(label="✅ Done! Video ready.", state="complete")
+            status.update(label="Done! Video ready.", state="complete")
+
 
 # ─────────────────────────────────────────────────────────────
 # Video Player
@@ -534,15 +563,27 @@ if st.session_state.get("video_path") and os.path.exists(st.session_state.video_
             unsafe_allow_html=True,
         )
 
-        # Download button
+        # Download MP4
         with open(st.session_state.video_path, "rb") as f:
             st.download_button(
-                label="⬇️ Download MP4",
+                label="Download MP4",
                 data=f,
                 file_name="tracex_visualization.mp4",
                 mime="video/mp4",
                 use_container_width=True,
             )
+
+        # Download JSON timeline
+        tpath = st.session_state.get("timeline_path", "")
+        if tpath and os.path.exists(tpath):
+            with open(tpath, "r", encoding="utf-8") as jf:
+                st.download_button(
+                    label="Download Timeline JSON",
+                    data=jf.read(),
+                    file_name="tracex_timeline.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
 
         if st.session_state.trace_error:
             with st.expander("💥 Error Details"):
