@@ -20,7 +20,10 @@ from components.input_parser import (
 from components.syntax_checker import check_syntax
 from components.video_renderer import generate_syntax_error_video
 from components.tracer import trace_python_code, steps_to_json
-from components.runtime_executor import run_code, SUPPORTED_LANGUAGES
+from components.runtime_executor import (
+    run_code, SUPPORTED_LANGUAGES,
+    is_cpp_leetcode_style, parse_cpp_solution,
+)
 
 # ── Page Config ───────────────────────────────────────────────
 st.set_page_config(
@@ -317,7 +320,6 @@ need_inputs = (
 
 if need_inputs:
     sigs = detect_functions(code_snapshot)
-    # Pick the first non-trivial function
     sig = next((s for s in sigs if s.params), None)
     st.session_state.leet_sig = sig
 
@@ -326,25 +328,22 @@ if need_inputs:
         st.markdown(
             f"""
             <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem">
-                <span style="font-size:1.1rem">🧩</span>
+                <span style="font-size:1.1rem">&#129513;</span>
                 <span style="font-size:0.8rem;font-weight:700;letter-spacing:1.5px;
                              text-transform:uppercase;color:#94A3B8">
-                    Test Input &nbsp;—&nbsp;
+                    Test Input &nbsp;&mdash;&nbsp;
                     <code style="color:#A78BFA;font-size:0.85rem">{sig.name}()</code>
                 </span>
             </div>
             """,
             unsafe_allow_html=True,
         )
-
         with st.container():
             st.markdown(
                 '<div style="background:#1A1A35;border:1px solid rgba(124,58,237,0.3);'
                 'border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:0.5rem">',
                 unsafe_allow_html=True,
             )
-
-            # One input field per parameter
             cols = st.columns(max(1, min(len(sig.params), 3)))
             for idx, param in enumerate(sig.params):
                 hint = sig.type_hints.get(param, "")
@@ -358,10 +357,8 @@ if need_inputs:
                         key=f"leet_input_{param}",
                     )
                     st.session_state.leet_inputs[param] = val
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # Preview injected call
         args_preview = ", ".join(
             f"{p}={st.session_state.leet_inputs.get(p, '...')}"
             for p in sig.params
@@ -378,8 +375,90 @@ if need_inputs:
             unsafe_allow_html=True,
         )
     else:
-        st.info("ℹ️ No parameterised functions detected — running as-is.")
+        st.info("No parameterised functions detected — running as-is.")
         st.session_state.leet_sig = None
+
+# ── C++ LeetCode Input Panel ──────────────────────────────────
+cpp_need_inputs = (
+    lang == "C++"
+    and mode == "LeetCode"
+    and is_cpp_leetcode_style(code_snapshot)
+)
+
+if "cpp_leet_inputs" not in st.session_state:
+    st.session_state.cpp_leet_inputs = {}
+if "cpp_leet_sig" not in st.session_state:
+    st.session_state.cpp_leet_sig = None
+
+if cpp_need_inputs:
+    cpp_sol = parse_cpp_solution(code_snapshot)
+    st.session_state.cpp_leet_sig = cpp_sol
+
+    if cpp_sol and cpp_sol.params:
+        st.markdown("---")
+        st.markdown(
+            f"""
+            <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.75rem">
+                <span style="font-size:1.1rem">&#129513;</span>
+                <span style="font-size:0.8rem;font-weight:700;letter-spacing:1.5px;
+                             text-transform:uppercase;color:#94A3B8">
+                    C++ Test Input &nbsp;&mdash;&nbsp;
+                    <code style="color:#A78BFA;font-size:0.85rem">{cpp_sol.func_name}()</code>
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        _KIND_PLACEHOLDER = {
+            'int_list':  'e.g. [2, 7, 11, 15]',
+            'str_list':  'e.g. ["flower", "flow", "flight"]',
+            'int':       'e.g. 9',
+            'string':    'e.g. anagram',
+            'float':     'e.g. 3.14',
+        }
+        _KIND_LABEL = {
+            'int_list':  'vector&lt;int&gt;',
+            'str_list':  'vector&lt;string&gt;',
+            'int':       'int',
+            'string':    'string',
+            'float':     'double',
+        }
+
+        with st.container():
+            st.markdown(
+                '<div style="background:#1A1A35;border:1px solid rgba(124,58,237,0.3);'
+                'border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:0.5rem">',
+                unsafe_allow_html=True,
+            )
+            cols = st.columns(max(1, min(len(cpp_sol.params), 3)))
+            for idx, param in enumerate(cpp_sol.params):
+                type_label = _KIND_LABEL.get(param.py_kind, param.cpp_type)
+                ph = _KIND_PLACEHOLDER.get(param.py_kind, 'value')
+                with cols[idx % len(cols)]:
+                    val = st.text_input(
+                        f"`{param.name}` — `{type_label}`",
+                        value=st.session_state.cpp_leet_inputs.get(param.name, ""),
+                        placeholder=ph,
+                        key=f"cpp_leet_{param.name}",
+                    )
+                    st.session_state.cpp_leet_inputs[param.name] = val
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # Preview injected call
+        args_preview = ", ".join(
+            f"{p.name}={st.session_state.cpp_leet_inputs.get(p.name, '...')}"
+            for p in cpp_sol.params
+        )
+        st.markdown(
+            f'<div class="tooltip-card" style="margin-top:0">'
+            f'<strong>Will call:</strong><br/>'
+            f'<code style="color:#06B6D4">sol.{cpp_sol.func_name}({args_preview})</code>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No method detected in class Solution — will run with sample inputs.")
 
 
 # (_placeholder_for is defined at top of file)
@@ -472,12 +551,17 @@ if st.session_state.run_trigger:
                     st.write(f"Captured **{len(steps)} execution steps**")
                 except Exception as exc:
                     st.error(f"Tracer failed: {exc}")
-                    st.stop()
+# ... (Previous code block remains unchanged)
+
             else:
                 # C / C++ / Java / JavaScript via subprocess
                 st.write(f"Compiling and running {lang}...")
                 try:
-                    result     = run_code(code, lang)
+                    # Pass C++ user inputs if in LeetCode mode
+                    cpp_inputs = None
+                    if lang == "C++" and st.session_state.exec_mode == "LeetCode":
+                        cpp_inputs = st.session_state.get("cpp_leet_inputs") or None
+                    result = run_code(code, lang, user_inputs=cpp_inputs)
                     steps      = result.timeline
                     stdout_out = result.stdout
                     if not result.compile_ok:

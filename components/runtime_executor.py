@@ -9,11 +9,178 @@ and generate a simplified but informative execution timeline.
 """
 
 import os
+import re
 import subprocess
 import tempfile
 import json
 import time
 from dataclasses import dataclass, field
+
+
+@dataclass
+class CppParam:
+    name: str
+    cpp_type: str          # raw C++ type string e.g. "vector<int>&"
+    py_kind: str           # 'int_list' | 'str_list' | 'int' | 'string' | 'float'
+
+
+@dataclass
+class CppSolution:
+    func_name:   str
+    return_type: str       # e.g. "vector<int>", "int", "string"
+    params:      list[CppParam]
+
+
+# ── C++ LeetCode signature parser ─────────────────────────────
+
+def is_cpp_leetcode_style(source: str) -> bool:
+    """Return True if source looks like a LeetCode C++ class Solution."""
+    return bool(re.search(r'\bclass\s+Solution\b', source))
+
+
+def parse_cpp_solution(source: str) -> CppSolution | None:
+    """
+    Parse the first public method inside class Solution.
+    Returns a CppSolution with param names, types, and py_kind.
+    """
+    # Find the method signature inside Solution
+    m = re.search(
+        r'(vector\s*<[^>]+>|string|int|long long|long|bool|double|float|void)\s+'
+        r'(\w+)\s*\(([^)]*)\)\s*\{',
+        source
+    )
+    if not m:
+        return None
+
+    ret_type  = m.group(1).strip()
+    func_name = m.group(2).strip()
+    raw_params = m.group(3).strip()
+
+    params: list[CppParam] = []
+    for raw in raw_params.split(','):
+        raw = raw.strip()
+        if not raw:
+            continue
+        # Last token is the parameter name
+        tokens = raw.replace('&', ' ').replace('*', ' ').split()
+        if len(tokens) < 2:
+            continue
+        pname  = tokens[-1]
+        ptype  = ' '.join(tokens[:-1])
+
+        # Map C++ type → python kind for UI hint
+        if 'vector<int>' in ptype or 'vector<long' in ptype:
+            kind = 'int_list'
+        elif 'vector<string>' in ptype or 'vector<char>' in ptype:
+            kind = 'str_list'
+        elif 'string' in ptype:
+            kind = 'string'
+        elif 'double' in ptype or 'float' in ptype:
+            kind = 'float'
+        elif 'int' in ptype or 'long' in ptype or 'bool' in ptype:
+            kind = 'int'
+        else:
+            kind = 'string'
+
+        params.append(CppParam(name=pname, cpp_type=ptype, py_kind=kind))
+
+    return CppSolution(func_name=func_name, return_type=ret_type, params=params)
+
+
+def _cpp_literal(value_str: str, kind: str) -> str:
+    """Convert a user input string to a valid C++ literal."""
+    v = value_str.strip()
+    if kind == 'int_list':
+        # Accept: [2,7,11,15] or 2 7 11 15
+        nums = re.findall(r'-?\d+', v)
+        return '{' + ', '.join(nums) + '}'
+    elif kind == 'str_list':
+        # Accept: ["a","b"] or a b
+        items = re.findall(r'"([^"]*)"', v)
+        if not items:
+            items = [x.strip() for x in v.strip('[]').split(',') if x.strip()]
+        return '{' + ', '.join(f'"{x}"' for x in items) + '}'
+    elif kind == 'string':
+        v = v.strip('"\'')
+        return f'"{v}"'
+    elif kind == 'float':
+        try:
+            return str(float(v))
+        except Exception:
+            return '0.0'
+    else:  # int / long / bool
+        try:
+            return str(int(v))
+        except Exception:
+            return '0'
+
+
+def _cpp_var_decl(param: CppParam, value_str: str) -> str:
+    """Generate a C++ variable declaration for a parameter."""
+    lit = _cpp_literal(value_str, param.py_kind)
+    kind = param.py_kind
+    name = param.name
+
+    if kind == 'int_list':
+        return f'    vector<int> {name} = {lit};'
+    elif kind == 'str_list':
+        return f'    vector<string> {name} = {lit};'
+    elif kind == 'string':
+        return f'    string {name} = {lit};'
+    elif kind == 'float':
+        return f'    double {name} = {lit};'
+    else:
+        return f'    int {name} = {lit};'
+
+
+def build_cpp_main(solution: CppSolution, user_inputs: dict[str, str]) -> str:
+    """
+    Generate a main() function that instantiates Solution,
+    declares user-supplied inputs, calls the method and prints the result.
+    """
+    decls = []
+    call_args = []
+    for param in solution.params:
+        raw = user_inputs.get(param.name, "")
+        decls.append(_cpp_var_decl(param, raw))
+        call_args.append(param.name)
+
+    decls_str = '\n'.join(decls)
+    args_str  = ', '.join(call_args)
+    ret       = solution.return_type
+
+    if ret == 'void':
+        print_line = f'    sol.{solution.func_name}({args_str});'
+        output_line = '    cout << "Done" << endl;'
+    elif 'vector' in ret:
+        print_line = f'    auto res = sol.{solution.func_name}({args_str});'
+        output_line = (
+            '    cout << "[";\n'
+            '    for (int i = 0; i < (int)res.size(); i++) {\n'
+            '        if (i) cout << ", ";\n'
+            '        cout << res[i];\n'
+            '    }\n'
+            '    cout << "]" << endl;'
+        )
+    elif ret == 'string':
+        print_line  = f'    auto res = sol.{solution.func_name}({args_str});'
+        output_line = '    cout << res << endl;'
+    else:
+        print_line  = f'    auto res = sol.{solution.func_name}({args_str});'
+        output_line = '    cout << res << endl;'
+
+    return (
+        '\nint main() {\n'
+        '    Solution sol;\n'
+        f'{decls_str}\n'
+        f'{print_line}\n'
+        f'{output_line}\n'
+        '    return 0;\n'
+        '}'
+    )
+
+
+
 
 
 @dataclass
@@ -57,109 +224,35 @@ def _has_main(source: str) -> bool:
     return bool(re.search(r'\bmain\s*\(', source))
 
 
-def _normalize_cpp_leetcode(source: str) -> str:
+def _normalize_cpp_leetcode(source: str, user_inputs: dict | None = None) -> str:
     """
     If the C++ source is LeetCode-style (class Solution, no main),
-    inject the standard headers and a main() that calls twoSum-style method.
-    Supports: twoSum, maxProfit, longestCommonPrefix, and generic void/int methods.
+    inject standard headers + a main() using user_inputs (or sample values).
     """
-    import re
     if _has_main(source):
         return source
 
-    # Detect method signature inside Solution
-    # Pattern: returnType methodName(params)
-    method_pat = re.search(
-        r'(?:public\s+)?'
-        r'(vector\s*<[^>]+>|string|int|bool|double|float|long|void)\s+'
-        r'(\w+)\s*\(([^)]*)\)',
-        source
-    )
+    headers = "#include <bits/stdc++.h>\nusing namespace std;\n"
 
-    headers = """\
-#include <bits/stdc++.h>
-using namespace std;
-"""
-    # Build a minimal main based on detected method
-    main_block = ""
-    if method_pat:
-        ret_type  = method_pat.group(1).strip()
-        func_name = method_pat.group(2).strip()
-        params    = method_pat.group(3).strip()
+    # Try to parse the method signature
+    solution = parse_cpp_solution(source)
 
-        # Build argument list with sample values
-        args = []
-        for param in params.split(','):
-            param = param.strip()
-            if not param:
-                continue
-            if 'vector<int>' in param:
-                args.append('nums')
-            elif 'vector<string>' in param:
-                args.append('strs')
-            elif 'string' in param:
-                args.append('s')
-            elif 'int' in param:
-                args.append('target')
-            elif 'double' in param or 'float' in param:
-                args.append('0.0')
-            else:
-                args.append('0')
-
-        arg_str = ', '.join(args)
-
-        # Declare sample inputs
-        decls = []
-        for param in params.split(','):
-            param = param.strip()
-            if not param:
-                continue
-            if 'vector<int>' in param:
-                decls.append('    vector<int> nums = {2, 7, 11, 15};')
-            elif 'vector<string>' in param:
-                decls.append('    vector<string> strs = {"flower","flow","flight"};')
-            elif 'string' in param and '&' in param:
-                decls.append('    string s = "anagram";')
-            elif 'int' in param:
-                decls.append('    int target = 9;')
-
-        decls_str = '\n'.join(decls)
-
-        if ret_type == 'void':
-            main_block = f"""
-int main() {{
-    Solution sol;
-{decls_str}
-    sol.{func_name}({arg_str});
-    return 0;
-}}"""
-        elif 'vector' in ret_type:
-            main_block = f"""
-int main() {{
-    Solution sol;
-{decls_str}
-    auto res = sol.{func_name}({arg_str});
-    cout << "[";
-    for (int i = 0; i < (int)res.size(); i++) {{
-        if (i) cout << ", ";
-        cout << res[i];
-    }}
-    cout << "]" << endl;
-    return 0;
-}}"""
-        else:
-            main_block = f"""
-int main() {{
-    Solution sol;
-{decls_str}
-    auto res = sol.{func_name}({arg_str});
-    cout << res << endl;
-    return 0;
-}}"""
+    if solution and user_inputs:
+        # Use actual user-supplied values
+        main_block = build_cpp_main(solution, user_inputs)
+    elif solution:
+        # Fall back to sample values per type
+        sample = {}
+        for p in solution.params:
+            if p.py_kind == 'int_list':  sample[p.name] = '[2, 7, 11, 15]'
+            elif p.py_kind == 'str_list': sample[p.name] = '["flower", "flow", "flight"]'
+            elif p.py_kind == 'string':  sample[p.name] = 'anagram'
+            elif p.py_kind == 'float':   sample[p.name] = '0.0'
+            else:                         sample[p.name] = '9'
+        main_block = build_cpp_main(solution, sample)
     else:
-        main_block = "\nint main() { Solution sol; return 0; }\n"
+        main_block = "\nint main() { return 0; }\n"
 
-    # Prepend headers if not already present
     if '#include' not in source:
         return headers + "\n" + source + "\n" + main_block
     return source + "\n" + main_block
@@ -335,9 +428,9 @@ def run_c(source: str, stdin: str = "") -> ExecutionResult:
 
 # ── C++ Executor ──────────────────────────────────────────────
 
-def run_cpp(source: str, stdin: str = "") -> ExecutionResult:
+def run_cpp(source: str, stdin: str = "", user_inputs: dict | None = None) -> ExecutionResult:
     """Compile and run C++ code with g++."""
-    source = _normalize_cpp_leetcode(source)  # inject headers + main() if LeetCode-style
+    source = _normalize_cpp_leetcode(source, user_inputs)  # inject main() with user inputs
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "main.cpp")
         exe_path = os.path.join(tmpdir, "main.exe")
@@ -441,11 +534,13 @@ _RUNNERS = {
 SUPPORTED_LANGUAGES = set(_RUNNERS.keys())
 
 
-def run_code(source: str, language: str, stdin: str = "") -> ExecutionResult:
+def run_code(source: str, language: str, stdin: str = "", user_inputs: dict | None = None) -> ExecutionResult:
     """
     Dispatch to the appropriate language runner.
-    Returns an ExecutionResult with a full timeline.
+    user_inputs: optional dict of {param_name: value_str} for C++ LeetCode mode.
     """
+    if language == "C++":
+        return run_cpp(source, stdin=stdin, user_inputs=user_inputs)
     runner = _RUNNERS.get(language)
     if runner is None:
         return ExecutionResult(
@@ -454,6 +549,7 @@ def run_code(source: str, language: str, stdin: str = "") -> ExecutionResult:
             exec_time_ms=0, timeline=[],
         )
     return runner(source, stdin=stdin)
+
 
 
 def result_to_json(result: ExecutionResult, indent: int = 2) -> str:
