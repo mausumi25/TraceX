@@ -551,7 +551,7 @@ if st.session_state.run_trigger:
                     st.write(f"Captured **{len(steps)} execution steps**")
                 except Exception as exc:
                     st.error(f"Tracer failed: {exc}")
-# ... (Previous code block remains unchanged)
+                    st.stop()
 
             else:
                 # C / C++ / Java / JavaScript via subprocess
@@ -670,8 +670,46 @@ if st.session_state.get("video_path") and os.path.exists(st.session_state.video_
                 )
 
         if st.session_state.trace_error:
-            with st.expander("💥 Error Details"):
+            with st.expander("Error Details"):
                 st.code(st.session_state.trace_error, language="python")
+
+    # ── JSON Timeline Viewer ──────────────────────────────────
+    tpath = st.session_state.get("timeline_path", "")
+    if tpath and os.path.exists(tpath):
+        import json as _json
+        with open(tpath, "r", encoding="utf-8") as _jf:
+            _steps = _json.load(_jf)
+
+        with st.expander(f"Execution Timeline — {len(_steps)} steps", expanded=False):
+            # Render as a clean table
+            rows = []
+            for s in _steps:
+                rows.append({
+                    "Step":      s.get("step", ""),
+                    "Line":      s.get("line", ""),
+                    "Event":     s.get("event", ""),
+                    "Note":      s.get("note", "")[:60],
+                    "Variables": ", ".join(
+                        f"{k}={v}" for k, v in list(s.get("variables", {}).items())[:4]
+                    ) or "—",
+                    "Loops":     ", ".join(
+                        f"{l['var']}={l['value']}" for l in s.get("loops", [])
+                    ) or "—",
+                    "Output":    (s.get("stdout", "") or "").strip().split("\n")[-1][:40] or "—",
+                })
+
+            import pandas as pd
+            try:
+                st.dataframe(
+                    pd.DataFrame(rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            except Exception:
+                for row in rows[:50]:
+                    st.text(str(row))
+
+
 
 
 # ─────────────────────────────────────────────────────────────

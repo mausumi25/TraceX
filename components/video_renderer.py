@@ -48,7 +48,7 @@ def _fig_to_rgb(fig):
 
 def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.ndarray:
     """Render a single execution step as an RGB frame."""
-    fig = plt.figure(figsize=(16, 9), dpi=100, facecolor=BG)
+    fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
     gs  = GridSpec(
         3, 2,
         figure=fig,
@@ -201,7 +201,7 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
 
 def _render_title_frame(language: str, mode: str, total_steps: int) -> np.ndarray:
     """Splash / intro frame."""
-    fig, ax = plt.subplots(figsize=(16, 9), dpi=100)
+    fig, ax = plt.subplots(figsize=(16, 9.12), dpi=100)
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
@@ -226,7 +226,7 @@ def _render_title_frame(language: str, mode: str, total_steps: int) -> np.ndarra
 
 def _render_end_frame(stdout_final: str, error: str | None) -> np.ndarray:
     """End / summary frame."""
-    fig, ax = plt.subplots(figsize=(16, 9), dpi=100)
+    fig, ax = plt.subplots(figsize=(16, 9.12), dpi=100)
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
@@ -272,7 +272,7 @@ def _render_syntax_error_frame(
     total_frames: int,
 ) -> np.ndarray:
     """One frame of the syntax-error video — pulsing red highlight on bad line."""
-    fig = plt.figure(figsize=(16, 9), dpi=100, facecolor=BG)
+    fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
     gs  = GridSpec(2, 2, figure=fig,
                    left=0.03, right=0.97, top=0.91, bottom=0.08,
                    hspace=0.25, wspace=0.06, height_ratios=[2.5, 1])
