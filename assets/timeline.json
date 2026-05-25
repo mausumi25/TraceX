@@ -1,0 +1,68 @@
+[
+  {
+    "step": 1,
+    "line": 0,
+    "line_no": 0,
+    "line_text": "",
+    "event": "call",
+    "variables": {},
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "compile",
+        "line": 0,
+        "args": {}
+      }
+    ],
+    "stdout": "",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Compiled C++ source successfully",
+    "phase": "compile"
+  },
+  {
+    "step": 2,
+    "line": 1,
+    "line_no": 1,
+    "line_text": "",
+    "event": "line",
+    "variables": {},
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "output",
+        "line": 1,
+        "args": {}
+      }
+    ],
+    "stdout": "1",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Output: 1",
+    "phase": "output"
+  },
+  {
+    "step": 3,
+    "line": 29,
+    "line_no": 29,
+    "line_text": "",
+    "event": "return",
+    "variables": {},
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "finish",
+        "line": 29,
+        "args": {}
+      }
+    ],
+    "stdout": "1\n",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Program finished successfully",
+    "phase": "finish"
+  }
+]

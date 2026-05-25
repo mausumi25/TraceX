@@ -426,11 +426,74 @@ def run_c(source: str, stdin: str = "") -> ExecutionResult:
         )
 
 
-# ── C++ Executor ──────────────────────────────────────────────
+# ── C++ Executor (GDB line-by-line tracer) ────────────────────
+
+_GDB_TRACE_SCRIPT = os.path.join(
+    os.path.dirname(__file__), "gdb_trace.py"
+)
+
+
+def _trace_with_gdb(exe_path: str, source: str, language: str,
+                    stdin: str = "", timeout: int = 30) -> list[dict]:
+    """
+    Run the executable under GDB with gdb_trace.py.
+    Returns a timeline list, or [] if GDB is unavailable / fails.
+    """
+    if not os.path.exists(_GDB_TRACE_SCRIPT):
+        return []
+
+    try:
+        proc = subprocess.run(
+            ["gdb", "--batch", "-x", _GDB_TRACE_SCRIPT, exe_path],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        combined = proc.stdout + proc.stderr
+
+        # Extract the JSON block between our sentinels
+        start = combined.find("TRACEX_JSON_BEGIN")
+        end   = combined.find("TRACEX_JSON_END")
+        if start == -1 or end == -1:
+            return []
+
+        json_str = combined[start + len("TRACEX_JSON_BEGIN"):end].strip()
+        steps = json.loads(json_str)
+
+        # Attach cumulative stdout to each step
+        # (GDB InferiorOutputFilter may not work on all builds —
+        #  use proc.stdout outside JSON block as fallback)
+        actual_stdout = combined[:start].strip()
+        # Filter out GDB startup noise
+        stdout_lines = [
+            l for l in actual_stdout.splitlines()
+            if not l.startswith("(gdb)") and not l.startswith("Breakpoint")
+            and not l.startswith("GNU gdb") and not l.startswith("[New")
+            and not l.startswith("Reading") and not l.startswith("warning:")
+        ]
+        program_stdout = "\n".join(stdout_lines).strip()
+
+        # Back-fill stdout into the last step
+        if steps:
+            for i, s in enumerate(steps):
+                # Cumulative stdout grows across steps
+                if i == len(steps) - 1:
+                    s["stdout"] = program_stdout or s.get("stdout", "")
+
+        return steps
+
+    except (subprocess.TimeoutExpired, json.JSONDecodeError,
+            FileNotFoundError, Exception):
+        return []
+
 
 def run_cpp(source: str, stdin: str = "", user_inputs: dict | None = None) -> ExecutionResult:
-    """Compile and run C++ code with g++."""
-    source = _normalize_cpp_leetcode(source, user_inputs)  # inject main() with user inputs
+    """Compile with -g and trace line-by-line via GDB; fall back to output-only."""
+    from components.gdb_tracer import trace_cpp_with_gdb
+
+    source = _normalize_cpp_leetcode(source, user_inputs)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "main.cpp")
         exe_path = os.path.join(tmpdir, "main.exe")
@@ -438,8 +501,9 @@ def run_cpp(source: str, stdin: str = "", user_inputs: dict | None = None) -> Ex
         with open(src_path, "w") as f:
             f.write(source)
 
+        # Compile with debug symbols
         comp_out, comp_err, comp_rc, _ = _run(
-            ["g++", src_path, "-o", exe_path, "-std=c++17", "-Wall"]
+            ["g++", src_path, "-o", exe_path, "-std=c++17", "-g", "-O0"]
         )
         if comp_rc != 0:
             return ExecutionResult(
@@ -451,13 +515,38 @@ def run_cpp(source: str, stdin: str = "", user_inputs: dict | None = None) -> Ex
                                      event="exception")],
             )
 
+        # ── Always run program to get real stdout ─────────────
         stdout, stderr, rc, elapsed = _run([exe_path], stdin=stdin)
+
+        # ── Try GDB line-by-line trace ────────────────────────
+        gdb_steps = trace_cpp_with_gdb(source, exe_path, stdin=stdin)
+
+        if gdb_steps:
+            # Distribute stdout to steps (last step gets full output)
+            out_lines = stdout.strip().splitlines()
+            total = len(gdb_steps)
+            for i, step in enumerate(gdb_steps):
+                # Show progressively more output as steps advance
+                visible = out_lines[:max(0, int(len(out_lines) * (i + 1) / total))]
+                step["stdout"] = "\n".join(visible)
+            gdb_steps[-1]["stdout"] = stdout   # final step = full output
+
+            return ExecutionResult(
+                language="C++", stdout=stdout, stderr=stderr,
+                return_code=rc, compile_ok=True, compile_err="",
+                exec_time_ms=elapsed, timeline=gdb_steps,
+            )
+
+        # ── Fallback: output-only timeline ────────────────────
         timeline = _build_output_timeline(source, stdout, stderr, rc, "C++")
         return ExecutionResult(
             language="C++", stdout=stdout, stderr=stderr,
             return_code=rc, compile_ok=True, compile_err="",
             exec_time_ms=elapsed, timeline=timeline,
         )
+
+
+
 
 
 # ── Java Executor ─────────────────────────────────────────────
