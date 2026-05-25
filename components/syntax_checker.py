@@ -2,14 +2,20 @@
 TraceX — Syntax Checker
 Detects syntax errors BEFORE execution using language-native tools.
 
-Python  → compile()
-C/C++   → gcc/g++ -fsyntax-only (if available)
-Java    → javac (if available)
+Python      → compile()
+C/C++       → gcc/g++ -fsyntax-only
+Java        → javac
+JavaScript  → skipped (no native checker)
+
+Key design: for LeetCode-style code (class Solution, no #include / no main),
+we inject the necessary boilerplate before the syntax check so that valid
+LeetCode code is never flagged as a false-positive error.
 """
 
 import subprocess
 import tempfile
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -20,6 +26,8 @@ class SyntaxError_:
     message: str     # human-readable error message
     language: str
 
+
+# ── Python ────────────────────────────────────────────────────
 
 def check_python(source: str) -> SyntaxError_ | None:
     """Use compile() to catch SyntaxError before execution."""
@@ -37,8 +45,10 @@ def check_python(source: str) -> SyntaxError_ | None:
         return SyntaxError_(line=-1, col=-1, message=str(e), language="Python")
 
 
+# ── Subprocess helper ─────────────────────────────────────────
+
 def _run_compiler(cmd: list[str]) -> tuple[str, str, int]:
-    """Run a compiler command, return (stdout, stderr, returncode)."""
+    """Run a compiler command. Returns (stdout, stderr, returncode)."""
     try:
         result = subprocess.run(
             cmd,
@@ -52,6 +62,8 @@ def _run_compiler(cmd: list[str]) -> tuple[str, str, int]:
     except subprocess.TimeoutExpired:
         return "", "Compiler timed out", -1
 
+
+# ── C ─────────────────────────────────────────────────────────
 
 def check_c(source: str) -> SyntaxError_ | None:
     """Use gcc -fsyntax-only to detect C syntax errors."""
@@ -67,39 +79,92 @@ def check_c(source: str) -> SyntaxError_ | None:
         os.unlink(fname)
 
 
+# ── C++ ───────────────────────────────────────────────────────
+
+def _prepare_cpp(source: str) -> tuple[str, int]:
+    """
+    For LeetCode-style C++ (class Solution, no headers, no main):
+    prepend #include <bits/stdc++.h> and append a stub main().
+    Returns (normalized_source, number_of_header_lines_prepended).
+    """
+    has_include  = "#include" in source
+    has_main     = bool(re.search(r"\bmain\s*\(", source))
+    is_lc_style  = bool(re.search(r"\bclass\s+Solution\b", source))
+
+    prefix = ""
+    if not has_include:
+        prefix = "#include <bits/stdc++.h>\nusing namespace std;\n"
+
+    suffix = ""
+    if is_lc_style and not has_main:
+        suffix = "\nint main() { return 0; }\n"
+
+    normalized  = prefix + source + suffix
+    extra_lines = len(prefix.splitlines())
+    return normalized, extra_lines
+
+
 def check_cpp(source: str) -> SyntaxError_ | None:
-    """Use g++ -fsyntax-only to detect C++ syntax errors."""
+    """
+    Use g++ -fsyntax-only -std=c++17 to detect C++ syntax errors.
+    Normalizes LeetCode-style code first to avoid false-positives.
+    """
+    normalized, extra_lines = _prepare_cpp(source)
+
     with tempfile.NamedTemporaryFile(suffix=".cpp", delete=False, mode="w") as f:
-        f.write(source)
+        f.write(normalized)
         fname = f.name
     try:
-        _, stderr, rc = _run_compiler(["g++", "-fsyntax-only", fname])
+        _, stderr, rc = _run_compiler(
+            ["g++", "-fsyntax-only", "-std=c++17", fname]
+        )
         if rc == 0:
             return None
-        return _parse_gcc_error(stderr, "C++")
+        err = _parse_gcc_error(stderr, "C++")
+        # Shift reported line back to the user's original source
+        if err.line > 0:
+            err.line = max(1, err.line - extra_lines)
+        return err
     finally:
         os.unlink(fname)
+
+
+# ── Java ──────────────────────────────────────────────────────
+
+def _prepare_java(source: str) -> str:
+    """
+    If the Java source has no main() (bare class Solution),
+    inject a stub main() so javac compiles without 'no main method'.
+    """
+    if re.search(r"\bmain\s*\(", source):
+        return source
+    stub = "\n    public static void main(String[] args) {}\n"
+    last = source.rfind("}")
+    if last != -1:
+        return source[:last] + stub + source[last:]
+    return source
 
 
 def check_java(source: str) -> SyntaxError_ | None:
     """Use javac to detect Java syntax errors."""
-    with tempfile.NamedTemporaryFile(
-        suffix=".java", delete=False, mode="w", prefix="Main"
-    ) as f:
-        f.write(source)
-        fname = f.name
-    try:
+    normalized = _prepare_java(source)
+    m = re.search(r"(?:public\s+)?class\s+(\w+)", normalized)
+    class_name = m.group(1) if m else "Solution"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fname = os.path.join(tmpdir, f"{class_name}.java")
+        with open(fname, "w") as f:
+            f.write(normalized)
         _, stderr, rc = _run_compiler(["javac", fname])
         if rc == 0:
             return None
         return _parse_javac_error(stderr, fname)
-    finally:
-        os.unlink(fname)
 
+
+# ── Error parsers ─────────────────────────────────────────────
 
 def _parse_gcc_error(stderr: str, language: str) -> SyntaxError_:
     """Parse gcc/g++ error output: filename:line:col: error: msg"""
-    import re
     match = re.search(r":(\d+):(\d+):\s*error:\s*(.+)", stderr)
     if match:
         return SyntaxError_(
@@ -108,14 +173,12 @@ def _parse_gcc_error(stderr: str, language: str) -> SyntaxError_:
             message=match.group(3).strip(),
             language=language,
         )
-    # Fallback
-    first_line = stderr.strip().splitlines()[0] if stderr.strip() else "Unknown error"
-    return SyntaxError_(line=-1, col=-1, message=first_line, language=language)
+    first = stderr.strip().splitlines()[0] if stderr.strip() else "Unknown error"
+    return SyntaxError_(line=-1, col=-1, message=first, language=language)
 
 
 def _parse_javac_error(stderr: str, fname: str) -> SyntaxError_:
     """Parse javac error output: filename:line: error: msg"""
-    import re
     match = re.search(r":(\d+):\s*error:\s*(.+)", stderr)
     if match:
         return SyntaxError_(
@@ -124,23 +187,24 @@ def _parse_javac_error(stderr: str, fname: str) -> SyntaxError_:
             message=match.group(2).strip(),
             language="Java",
         )
-    first_line = stderr.strip().splitlines()[0] if stderr.strip() else "Unknown error"
-    return SyntaxError_(line=-1, col=-1, message=first_line, language="Java")
+    first = stderr.strip().splitlines()[0] if stderr.strip() else "Unknown error"
+    return SyntaxError_(line=-1, col=-1, message=first, language="Java")
 
+
+# ── Public API ────────────────────────────────────────────────
 
 _CHECKERS = {
     "Python":     check_python,
     "C":          check_c,
     "C++":        check_cpp,
     "Java":       check_java,
-    "JavaScript": lambda _: None,   # No native checker yet
+    "JavaScript": lambda _: None,   # No native checker — Node is too slow
 }
 
 
 def check_syntax(source: str, language: str) -> SyntaxError_ | None:
     """
-    Main entry point. Returns SyntaxError_ if a syntax error is found,
-    or None if the code is syntactically valid.
+    Returns SyntaxError_ if a syntax error is found, else None.
     """
     checker = _CHECKERS.get(language)
     if checker is None:
