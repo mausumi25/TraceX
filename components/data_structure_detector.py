@@ -74,9 +74,16 @@ _LL_NAMES     = {"head", "node", "tail", "ll", "linked"}
 
 
 def _name_hint(name: str, hint_set: set[str]) -> bool:
-    """Return True if variable name (lowercased) matches any hint."""
+    """Return True if variable name (lowercased) is in the hint set OR
+    ends with / equals one of the hints. Avoids false positives like
+    'nums' matching 'n' or 'sum' matching 's'."""
     n = name.lower()
-    return n in hint_set or any(h in n for h in hint_set)
+    # Exact match first
+    if n in hint_set:
+        return True
+    # Suffix / contains match only for multi-char hints
+    return any(len(h) >= 3 and (n == h or n.endswith(h) or n.startswith(h))
+               for h in hint_set)
 
 
 # ── Primitive helpers ──────────────────────────────────────────
@@ -311,6 +318,9 @@ def detect_all(variables_raw: dict[str, Any]) -> dict[str, StructureInfo]:
     """
     result = {}
     for name, value in variables_raw.items():
+        # Skip builtins, dunder names, and internal Python variables
+        if name.startswith("__") or name == "builtins":
+            continue
         try:
             result[name] = detect_structure(name, value)
         except Exception:

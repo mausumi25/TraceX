@@ -46,6 +46,12 @@ def _fig_to_rgb(fig):
     return arr[:, :, :3]
 
 
+def _ensure_912(fig):
+    """Resize canvas in-place so height is exactly 912px (divisible by 16)."""
+    fig.set_size_inches(16, 9.12)
+    fig.set_dpi(100)
+
+
 def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.ndarray:
     """Render a single execution step as an RGB frame — 4-panel layout."""
     fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
@@ -58,10 +64,12 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
         height_ratios=[2.5, 1.5, 1.8, 0.9],
     )
 
-    ax_code   = fig.add_subplot(gs[:, 0])       # left – full height – code
-    ax_vars   = fig.add_subplot(gs[0, 1])       # right row0 – variables
-    ax_struct = fig.add_subplot(gs[1:3, 1])     # right row1-2 – data structures
-    ax_stack  = fig.add_subplot(gs[3, 1])       # right row3 – call stack
+    _ensure_912(fig)
+
+    ax_code   = fig.add_subplot(gs[:, 0])
+    ax_vars   = fig.add_subplot(gs[0, 1])
+    ax_struct = fig.add_subplot(gs[1:3, 1])
+    ax_stack  = fig.add_subplot(gs[3, 1])
 
     for ax in (ax_code, ax_vars, ax_struct, ax_stack):
         ax.set_facecolor(BG3)
@@ -79,11 +87,9 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
              color=VIOLET, va="center", fontfamily="DejaVu Sans")
     fig.text(0.5, 0.965, step["note"], fontsize=10, color=TEXT2,
              ha="center", va="center")
-    fig.text(0.97, 0.965,
-             f"Step {step['step']} / {total_steps}",
+    fig.text(0.97, 0.965, f"Step {step['step']} / {total_steps}",
              fontsize=9, color=TEXT3, ha="right", va="center")
 
-    # Progress bar
     bar_ax = fig.add_axes([0.03, 0.945, 0.94, 0.008])
     bar_ax.set_facecolor(BG2)
     bar_ax.set_xlim(0, 1); bar_ax.set_ylim(0, 1)
@@ -98,7 +104,7 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     visible_start = max(0, step["line_no"] - 10)
     visible_lines = source_lines[visible_start: visible_start + 22]
     n = len(visible_lines)
-    ax_code.set_ylim(-0.5, n - 0.5)
+    ax_code.set_ylim(-0.5, max(n - 0.5, 0.5))   # never singular
 
     for i, text in enumerate(visible_lines):
         abs_ln     = visible_start + i + 1
@@ -128,7 +134,7 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     variables = step.get("variables", {})
     items     = list(variables.items())
     n_vars    = len(items)
-    ax_vars.set_ylim(-0.5, max(n_vars, 1) - 0.5)
+    ax_vars.set_ylim(-0.5, max(n_vars - 0.5, 0.5))   # never singular
 
     if not items:
         ax_vars.text(0.5, 0.5, "No variables yet",
@@ -171,12 +177,10 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     ax_struct.set_ylim(0, 1)
     ax_struct.axis("off")
 
-    structures = step.get("structures", [])
-    # Filter to only "interesting" structures (skip primitives & strings with short values)
+    structures  = step.get("structures", [])
     interesting = [
         s for s in structures
-        if s["kind"] not in ("Primitive", "Unknown")
-        and not (s["kind"] == "String" and len(s["meta"].get("length", "") or "") < 2)
+        if s["kind"] not in ("Primitive", "Unknown", "String")
     ]
 
     if not interesting:
@@ -693,19 +697,8 @@ def generate_video(
 ) -> str:
     """
     Compile all steps into an MP4 video.
-
-    Parameters
-    ----------
-    steps        : list of step dicts from tracer
-    source       : original source code string
-    language     : e.g. "Python"
-    mode         : "Full Program" | "LeetCode"
-    error        : error string if execution failed
-    output_path  : where to save the MP4 (auto-generates temp file if None)
-
-    Returns
-    -------
-    str : absolute path to the generated MP4 file
+    Builds a cumulative variable+structure snapshot so variables never
+    disappear when execution enters a sub-scope (e.g. comprehensions).
     """
     if output_path is None:
         tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
@@ -716,22 +709,60 @@ def generate_video(
     total_steps  = len(steps)
     final_stdout = steps[-1]["stdout"] if steps else ""
 
+    # ── Build cumulative snapshots ──────────────────────────────
+    # At each step, merge current vars/structs ON TOP OF the running
+    # cumulative state so sub-scope steps don't blank the display.
+    cumulative_vars    : dict = {}
+    cumulative_structs : dict = {}   # keyed by var name → struct dict
+
+    enriched_steps = []
+    for step in steps:
+        cur_vars = step.get("variables", {})
+        cur_structs = step.get("structures", [])
+
+        # Update cumulative only when we HAVE data (non-empty scope)
+        if cur_vars:
+            cumulative_vars.update(cur_vars)
+        if cur_structs:
+            for s in cur_structs:
+                # skip __builtins__ and other dunder names
+                if not s["name"].startswith("__"):
+                    cumulative_structs[s["name"]] = s
+
+        # Build enriched step with merged snapshot
+        enriched = dict(step)
+        enriched["variables"]  = dict(cumulative_vars)
+        enriched["structures"] = list(cumulative_structs.values())
+        enriched_steps.append(enriched)
+
     all_frames: list[np.ndarray] = []
 
-    # Intro (hold 3 seconds = 3 × FPS frames)
+    # Intro (3 seconds)
     title = _render_title_frame(language, mode, total_steps)
     all_frames.extend([title] * (FPS * 3))
 
     # Step frames
-    for step in steps:
+    for step in enriched_steps:
         frame = _render_frame(step, source_lines, total_steps)
+        # Crop/pad to exactly 912 height (handles DPI rounding)
+        h = frame.shape[0]
+        if h < 912:
+            pad = np.zeros((912 - h, frame.shape[1], 3), dtype=np.uint8)
+            frame = np.vstack([frame, pad])
+        elif h > 912:
+            frame = frame[:912]
         all_frames.extend([frame] * HOLD_FRAMES)
 
-    # End frame (hold 4 seconds)
+    # End frame (4 seconds)
     end_frame = _render_end_frame(final_stdout, error)
+    h = end_frame.shape[0]
+    if h < 912:
+        end_frame = np.vstack([end_frame,
+                                np.zeros((912 - h, end_frame.shape[1], 3), dtype=np.uint8)])
+    elif h > 912:
+        end_frame = end_frame[:912]
     all_frames.extend([end_frame] * (FPS * 4))
 
-    # Write MP4
     iio.imwrite(
         output_path,
         all_frames,

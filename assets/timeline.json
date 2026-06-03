@@ -1,16 +1,20 @@
 [
   {
     "step": 1,
-    "line": 0,
-    "line_no": 0,
-    "line_text": "",
-    "event": "call",
-    "variables": {},
+    "line": 29,
+    "line_no": 29,
+    "line_text": "string s = \"(()\";",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{004, 001, 0, 000, 033, 000}",
+      "res": "4201307"
+    },
     "loops": [],
     "call_stack": [
       {
-        "name": "compile",
-        "line": 0,
+        "name": "main",
+        "line": 29,
         "args": {}
       }
     ],
@@ -18,51 +22,137 @@
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Compiled C++ source successfully",
-    "phase": "compile"
+    "note": "Line 29  string s = \"(()\";",
+    "phase": "run"
   },
   {
     "step": 2,
-    "line": 1,
-    "line_no": 1,
-    "line_text": "",
+    "line": 30,
+    "line_no": 30,
+    "line_text": "auto res = sol.longestValidParentheses(s);",
     "event": "line",
-    "variables": {},
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{3, 000}",
+      "res": "4201307"
+    },
     "loops": [],
     "call_stack": [
       {
-        "name": "output",
-        "line": 1,
+        "name": "main",
+        "line": 30,
         "args": {}
       }
     ],
-    "stdout": "1",
+    "stdout": "",
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Output: 1",
-    "phase": "output"
+    "note": "Line 30  auto res = sol.longestValidParentheses(s);",
+    "phase": "run"
   },
   {
     "step": 3,
-    "line": 29,
-    "line_no": 29,
-    "line_text": "",
-    "event": "return",
-    "variables": {},
+    "line": 31,
+    "line_no": 31,
+    "line_text": "cout << res << endl;",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{3, 000}",
+      "res": "2"
+    },
     "loops": [],
     "call_stack": [
       {
-        "name": "finish",
+        "name": "main",
+        "line": 31,
+        "args": {}
+      }
+    ],
+    "stdout": "",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 31  cout << res << endl;",
+    "phase": "run"
+  },
+  {
+    "step": 4,
+    "line": 32,
+    "line_no": 32,
+    "line_text": "return 0;",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{3, 000}",
+      "res": "2"
+    },
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "_fu0___ZSt4cout",
+        "line": 32,
+        "args": {}
+      }
+    ],
+    "stdout": "",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 32  return 0;",
+    "phase": "run"
+  },
+  {
+    "step": 5,
+    "line": 29,
+    "line_no": 29,
+    "line_text": "string s = \"(()\";",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{3, 000}",
+      "res": "2"
+    },
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "_fu0___ZSt4cout",
         "line": 29,
         "args": {}
       }
     ],
-    "stdout": "1\n",
+    "stdout": "",
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Program finished successfully",
-    "phase": "finish"
+    "note": "Line 29  string s = \"(()\";",
+    "phase": "run"
+  },
+  {
+    "step": 6,
+    "line": 33,
+    "line_no": 33,
+    "line_text": "}",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "s": "{3, 000}",
+      "res": "2"
+    },
+    "loops": [],
+    "call_stack": [
+      {
+        "name": "_fu0___ZSt4cout",
+        "line": 33,
+        "args": {}
+      }
+    ],
+    "stdout": "2\n",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 33  }",
+    "phase": "run"
   }
 ]
