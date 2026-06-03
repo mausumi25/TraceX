@@ -22,6 +22,7 @@ import io
 import json
 import traceback
 import ast
+from components.data_structure_detector import detect_all, structures_to_json
 
 
 # ── Skip internal / stdlib names ──────────────────────────────
@@ -164,9 +165,17 @@ def trace_python_code(source: str, max_steps: int = 500):
             source_lines[ln - 1].rstrip()
             if 0 < ln <= len(source_lines) else ""
         )
-        variables  = _clean_vars(dict(frame.f_locals))
+        raw_locals = dict(frame.f_locals)
+        variables  = _clean_vars(raw_locals)
         call_stack = _build_call_stack(frame, source_lines)
         loops      = _detect_loops(frame, source_lines)
+
+        # ── Data structure detection on raw objects ───────────
+        try:
+            struct_infos = detect_all(raw_locals)
+            structures   = structures_to_json(struct_infos)
+        except Exception:
+            structures = []
 
         # Track loop iteration counts
         if _is_loop_line(line_text):
@@ -212,10 +221,11 @@ def trace_python_code(source: str, max_steps: int = 500):
         steps.append({
             "step":       count[0],
             "line":       ln,
-            "line_no":    ln,         # kept for video_renderer compatibility
+            "line_no":    ln,
             "line_text":  line_text,
             "event":      event,
             "variables":  variables,
+            "structures": structures,
             "loops":      loops,
             "call_stack": call_stack,
             "stdout":     stdout_buf.getvalue(),

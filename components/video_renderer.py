@@ -47,22 +47,23 @@ def _fig_to_rgb(fig):
 
 
 def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.ndarray:
-    """Render a single execution step as an RGB frame."""
+    """Render a single execution step as an RGB frame — 4-panel layout."""
     fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
     gs  = GridSpec(
-        3, 2,
+        4, 2,
         figure=fig,
         left=0.03, right=0.97,
-        top=0.91,  bottom=0.08,
-        hspace=0.35, wspace=0.06,
-        height_ratios=[3, 2, 1],
+        top=0.91,  bottom=0.05,
+        hspace=0.38, wspace=0.06,
+        height_ratios=[2.5, 1.5, 1.8, 0.9],
     )
 
-    ax_code  = fig.add_subplot(gs[:, 0])      # left – full height – code
-    ax_vars  = fig.add_subplot(gs[0:2, 1])    # right top – variables
-    ax_stack = fig.add_subplot(gs[2, 1])      # right bottom – call stack
+    ax_code   = fig.add_subplot(gs[:, 0])       # left – full height – code
+    ax_vars   = fig.add_subplot(gs[0, 1])       # right row0 – variables
+    ax_struct = fig.add_subplot(gs[1:3, 1])     # right row1-2 – data structures
+    ax_stack  = fig.add_subplot(gs[3, 1])       # right row3 – call stack
 
-    for ax in (ax_code, ax_vars, ax_stack):
+    for ax in (ax_code, ax_vars, ax_struct, ax_stack):
         ax.set_facecolor(BG3)
         for spine in ax.spines.values():
             spine.set_edgecolor(BORDER)
@@ -70,13 +71,12 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
         ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 
     # ─── Title bar ───────────────────────────────────────────
-    progress = step["step"] / max(total_steps, 1)
-    event_colors = {"call": VIOLET, "return": CYAN, "exception": ROSE, "line": GREEN}
-    ev_color = event_colors.get(step["event"], GREEN)
+    progress  = step["step"] / max(total_steps, 1)
+    ev_colors = {"call": VIOLET, "return": CYAN, "exception": ROSE, "line": GREEN}
+    ev_color  = ev_colors.get(step["event"], GREEN)
 
-    fig.text(0.03, 0.965, "🔍 TraceX", fontsize=16, fontweight="bold",
-             color=VIOLET, va="center",
-             fontfamily="DejaVu Sans")
+    fig.text(0.03, 0.965, "TraceX", fontsize=16, fontweight="bold",
+             color=VIOLET, va="center", fontfamily="DejaVu Sans")
     fig.text(0.5, 0.965, step["note"], fontsize=10, color=TEXT2,
              ha="center", va="center")
     fig.text(0.97, 0.965,
@@ -101,7 +101,7 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     ax_code.set_ylim(-0.5, n - 0.5)
 
     for i, text in enumerate(visible_lines):
-        abs_ln = visible_start + i + 1
+        abs_ln     = visible_start + i + 1
         is_current = (abs_ln == step["line_no"])
 
         if is_current:
@@ -110,27 +110,24 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
             ax_code.plot([0, 0.012], [n - 1 - i, n - 1 - i],
                          color=ev_color, lw=3, solid_capstyle="round")
 
-        # Line number
         ax_code.text(0.018, n - 1 - i, f"{abs_ln:>3}",
                      fontsize=7.5, color=TEXT3 if not is_current else ev_color,
                      va="center", fontfamily="monospace")
-        # Code text
         ax_code.text(0.065, n - 1 - i,
                      text[:72] if len(text) > 72 else text,
                      fontsize=8,
                      color=TEXT if is_current else TEXT2,
-                     va="center",
-                     fontfamily="monospace",
+                     va="center", fontfamily="monospace",
                      fontweight="bold" if is_current else "normal")
 
     # ─── Variables panel ─────────────────────────────────────
     ax_vars.set_title("  Variables", loc="left", fontsize=9,
-                      color=TEXT3, pad=6, fontweight="bold")
+                      color=TEXT3, pad=4, fontweight="bold")
     ax_vars.set_xlim(0, 1)
 
     variables = step.get("variables", {})
-    items = list(variables.items())
-    n_vars = len(items)
+    items     = list(variables.items())
+    n_vars    = len(items)
     ax_vars.set_ylim(-0.5, max(n_vars, 1) - 0.5)
 
     if not items:
@@ -138,65 +135,355 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
                      ha="center", va="center", color=TEXT3,
                      fontsize=9, transform=ax_vars.transAxes)
     else:
-        for i, (k, v) in enumerate(items[:12]):
-            row = n_vars - 1 - i
-            # Key box
+        for i, (k, v) in enumerate(items[:8]):
+            row  = n_vars - 1 - i
             rect = mpatches.FancyBboxPatch(
-                (0.01, row - 0.35), 0.3, 0.7,
+                (0.01, row - 0.35), 0.28, 0.7,
                 boxstyle="round,pad=0.02",
-                facecolor=BG2, edgecolor=PURPLE, linewidth=0.8
-            )
+                facecolor=BG2, edgecolor=PURPLE, linewidth=0.8)
             ax_vars.add_patch(rect)
-            ax_vars.text(0.16, row, k, ha="center", va="center",
-                         color=VIOLET, fontsize=8.5,
-                         fontfamily="monospace", fontweight="bold")
-            # Value box
+            ax_vars.text(0.15, row, k, ha="center", va="center",
+                         color=VIOLET, fontsize=8, fontfamily="monospace",
+                         fontweight="bold")
             rect2 = mpatches.FancyBboxPatch(
-                (0.33, row - 0.35), 0.65, 0.7,
+                (0.31, row - 0.35), 0.67, 0.7,
                 boxstyle="round,pad=0.02",
-                facecolor="#0A1628", edgecolor=BORDER, linewidth=0.8
-            )
+                facecolor="#0A1628", edgecolor=BORDER, linewidth=0.8)
             ax_vars.add_patch(rect2)
-            ax_vars.text(0.655, row,
-                         v[:40] if len(v) > 40 else v,
+            ax_vars.text(0.645, row,
+                         v[:38] if len(v) > 38 else v,
                          ha="center", va="center",
-                         color=CYAN, fontsize=8,
-                         fontfamily="monospace")
+                         color=CYAN, fontsize=7.5, fontfamily="monospace")
 
-    # ─── Stdout strip (below variables) ──────────────────────
     stdout_text = step.get("stdout", "").strip()
     if stdout_text:
-        last_lines = stdout_text.split("\n")[-3:]
-        preview = " │ ".join(last_lines)
-        ax_vars.text(0.5, -0.48,
-                     f"stdout ▸  {preview[:80]}",
-                     ha="center", va="center",
-                     color=GREEN, fontsize=7.5,
-                     fontfamily="monospace",
-                     transform=ax_vars.transAxes,
-                     clip_on=False)
+        last = stdout_text.split("\n")[-2:]
+        ax_vars.text(0.5, -0.55,
+                     "stdout  " + " | ".join(last)[:70],
+                     ha="center", va="center", color=GREEN,
+                     fontsize=7, fontfamily="monospace",
+                     transform=ax_vars.transAxes, clip_on=False)
+
+    # ─── Data Structures panel ────────────────────────────────
+    ax_struct.set_title("  Data Structures", loc="left", fontsize=9,
+                         color=TEXT3, pad=4, fontweight="bold")
+    ax_struct.set_xlim(0, 1)
+    ax_struct.set_ylim(0, 1)
+    ax_struct.axis("off")
+
+    structures = step.get("structures", [])
+    # Filter to only "interesting" structures (skip primitives & strings with short values)
+    interesting = [
+        s for s in structures
+        if s["kind"] not in ("Primitive", "Unknown")
+        and not (s["kind"] == "String" and len(s["meta"].get("length", "") or "") < 2)
+    ]
+
+    if not interesting:
+        ax_struct.text(0.5, 0.5, "No complex structures yet",
+                       ha="center", va="center", color=TEXT3,
+                       fontsize=9, transform=ax_struct.transAxes)
+    else:
+        _draw_structures(ax_struct, interesting[:3])
 
     # ─── Call Stack panel ─────────────────────────────────────
     ax_stack.set_title("  Call Stack", loc="left", fontsize=9,
-                       color=TEXT3, pad=6, fontweight="bold")
+                       color=TEXT3, pad=4, fontweight="bold")
     ax_stack.set_xlim(0, 1)
 
     stack = step.get("call_stack", [])
     if not stack:
-        stack = [{"name": "<module>", "line": step["line_no"], "file": "<module>"}]
+        stack = [{"name": "<module>", "line": step["line_no"]}]
 
     ax_stack.set_ylim(-0.5, len(stack) - 0.5)
     for i, frame in enumerate(stack):
-        col = VIOLET if i == len(stack) - 1 else TEXT2
-        label = f"{'→ ' if i == len(stack)-1 else '  '}{frame['name']}()  line {frame['line']}"
-        ax_stack.text(0.03, i, label,
-                      va="center", color=col, fontsize=8.5,
-                      fontfamily="monospace",
+        col   = VIOLET if i == len(stack) - 1 else TEXT2
+        label = f"{'-> ' if i == len(stack)-1 else '   '}{frame['name']}()  line {frame['line']}"
+        ax_stack.text(0.03, i, label, va="center", color=col,
+                      fontsize=8.5, fontfamily="monospace",
                       fontweight="bold" if i == len(stack) - 1 else "normal")
 
     frame_rgb = _fig_to_rgb(fig)
     plt.close(fig)
     return frame_rgb
+
+
+# ─── Structure Visualizer helpers ────────────────────────────
+
+_KIND_COLORS = {
+    "Array":       "#06B6D4",   # cyan
+    "Stack":       "#A78BFA",   # violet
+    "Queue":       "#34D399",   # green
+    "Matrix":      "#F59E0B",   # amber
+    "DP Table":    "#F97316",   # orange
+    "Linked List": "#EC4899",   # pink
+    "Tree":        "#10B981",   # emerald
+    "Graph":       "#6366F1",   # indigo
+    "Dict":        "#94A3B8",   # slate
+    "Set":         "#F43F5E",   # rose
+}
+
+
+def _draw_structures(ax, structures: list[dict]) -> None:
+    """Render up to 3 data structures inside ax (already normalised to [0,1]x[0,1])."""
+    n    = len(structures)
+    slot_h = 1.0 / n           # vertical slice per structure
+
+    for idx, s in enumerate(structures):
+        y_top = 1.0 - idx * slot_h
+        y_bot = y_top - slot_h
+        y_mid = (y_top + y_bot) / 2
+        color = _KIND_COLORS.get(s["kind"], TEXT3)
+
+        # Label badge
+        ax.text(0.01, y_top - 0.04,
+                f"{s['kind']}  {s['name']}",
+                va="top", ha="left",
+                fontsize=7.5, color=color,
+                fontweight="bold", fontfamily="monospace")
+
+        kind = s["kind"]
+        meta = s.get("meta", {})
+
+        if kind in ("Array", "Stack", "Queue"):
+            _draw_array_strip(ax, meta.get("elements", []), y_mid, color, kind)
+
+        elif kind in ("Matrix", "DP Table"):
+            _draw_matrix_grid(ax, meta.get("cells", []),
+                              meta.get("rows", 0), meta.get("cols", 0),
+                              y_bot + 0.02, y_top - 0.12, color)
+
+        elif kind == "Linked List":
+            _draw_linked_list(ax, meta.get("nodes", []), y_mid, color)
+
+        elif kind == "Tree":
+            _draw_tree(ax, meta.get("nodes", []), y_bot + 0.02, y_top - 0.12, color)
+
+        elif kind == "Graph":
+            _draw_graph_summary(ax, meta.get("nodes", []),
+                                meta.get("edges", []), y_mid, color)
+
+        elif kind in ("Dict", "Set"):
+            elems = meta.get("elements", meta.get("keys", []))
+            _draw_set_strip(ax, elems, y_mid, color)
+
+        # Divider
+        if idx < n - 1:
+            ax.axhline(y_bot, color=BORDER, lw=0.7, alpha=0.5)
+
+
+def _draw_array_strip(ax, elements: list, y: float, color: str, kind: str) -> None:
+    """Horizontal box strip for Array / Stack / Queue."""
+    if not elements:
+        ax.text(0.5, y, "[ ]", ha="center", va="center", color=TEXT3, fontsize=8)
+        return
+
+    MAX_BOXES = 14
+    show = elements[:MAX_BOXES]
+    n    = len(show)
+    box_w = min(0.06, 0.85 / n)
+    x_start = 0.07
+
+    # Arrow indicators for Stack / Queue
+    if kind == "Stack":
+        ax.annotate("TOP", xy=(x_start + (n - 1) * (box_w + 0.01) + box_w / 2, y + 0.06),
+                    fontsize=6.5, color=color, ha="center")
+    elif kind == "Queue":
+        ax.text(x_start - 0.05, y, "IN", fontsize=6.5, color=color,
+                ha="right", va="center")
+
+    for i, val in enumerate(show):
+        x = x_start + i * (box_w + 0.01)
+        rect = mpatches.FancyBboxPatch(
+            (x, y - 0.055), box_w, 0.11,
+            boxstyle="round,pad=0.005",
+            facecolor=color + "33",
+            edgecolor=color, linewidth=1.2,
+        )
+        ax.add_patch(rect)
+        label = str(val)[:5]
+        ax.text(x + box_w / 2, y, label,
+                ha="center", va="center",
+                fontsize=7, color=TEXT,
+                fontfamily="monospace")
+
+    if len(elements) > MAX_BOXES:
+        ax.text(x_start + MAX_BOXES * (box_w + 0.01) + 0.01, y,
+                f"…+{len(elements)-MAX_BOXES}",
+                va="center", fontsize=7, color=TEXT3)
+
+
+def _draw_matrix_grid(ax, cells: list, rows: int, cols: int,
+                      y_bot: float, y_top: float, color: str) -> None:
+    """Compact grid for Matrix / DP Table."""
+    if not cells or rows == 0 or cols == 0:
+        ax.text(0.5, (y_bot + y_top) / 2, "[ ]",
+                ha="center", va="center", color=TEXT3, fontsize=8)
+        return
+
+    MAX_R, MAX_C = 8, 10
+    show_rows = min(rows, MAX_R)
+    show_cols = min(cols, MAX_C)
+
+    h_total = y_top - y_bot
+    w_total = 0.88
+    cell_h  = h_total / show_rows
+    cell_w  = w_total / show_cols
+    x0 = 0.06
+
+    for r in range(show_rows):
+        for c in range(show_cols):
+            x = x0 + c * cell_w
+            y = y_bot + (show_rows - 1 - r) * cell_h
+            val = cells[r][c] if r < len(cells) and c < len(cells[r]) else ""
+
+            # Color heat map for DP tables
+            try:
+                intensity = float(val) / (max(
+                    abs(float(cells[rr][cc]))
+                    for rr in range(show_rows)
+                    for cc in range(show_cols)
+                    if rr < len(cells) and cc < len(cells[rr])
+                ) + 1e-9)
+                alpha = min(0.7, abs(intensity) * 0.6 + 0.1)
+            except Exception:
+                alpha = 0.15
+
+            rect = mpatches.FancyBboxPatch(
+                (x + 0.001, y + 0.001), cell_w - 0.002, cell_h - 0.002,
+                boxstyle="square,pad=0",
+                facecolor=color + f"{int(alpha*255):02x}",
+                edgecolor=color, linewidth=0.5,
+            )
+            ax.add_patch(rect)
+            label = str(val)[:4]
+            ax.text(x + cell_w / 2, y + cell_h / 2, label,
+                    ha="center", va="center",
+                    fontsize=min(7.5, 50 / max(show_cols, 1)),
+                    color=TEXT, fontfamily="monospace")
+
+    if rows > MAX_R or cols > MAX_C:
+        ax.text(0.97, y_bot, f"+more ({rows}x{cols})",
+                ha="right", va="bottom", fontsize=6.5, color=TEXT3)
+
+
+def _draw_linked_list(ax, nodes: list, y: float, color: str) -> None:
+    """Chain of boxes connected with arrows."""
+    if not nodes:
+        ax.text(0.5, y, "NULL", ha="center", va="center",
+                color=TEXT3, fontsize=9)
+        return
+
+    MAX_NODES = 10
+    show = nodes[:MAX_NODES]
+    n    = len(show)
+    box_w, box_h = 0.07, 0.1
+    gap  = 0.025
+    x0   = 0.04
+
+    total_w = n * box_w + (n - 1) * (gap + 0.025)
+    x0 = max(0.03, (1 - total_w) / 2)
+
+    for i, val in enumerate(show):
+        x = x0 + i * (box_w + gap + 0.025)
+        rect = mpatches.FancyBboxPatch(
+            (x, y - box_h / 2), box_w, box_h,
+            boxstyle="round,pad=0.005",
+            facecolor=color + "33", edgecolor=color, linewidth=1.3)
+        ax.add_patch(rect)
+        ax.text(x + box_w / 2, y, str(val)[:5],
+                ha="center", va="center",
+                fontsize=7.5, color=TEXT, fontfamily="monospace")
+        # Arrow
+        if i < n - 1:
+            ax.annotate("",
+                xy=(x + box_w + gap + 0.025, y),
+                xytext=(x + box_w + 0.003, y),
+                arrowprops=dict(arrowstyle="->", color=color, lw=1.2))
+
+    # NULL terminus
+    ax.text(x0 + n * (box_w + gap + 0.025) - gap, y,
+            "NULL", ha="left", va="center",
+            fontsize=7, color=TEXT3, fontfamily="monospace")
+
+
+def _draw_tree(ax, nodes: list[dict], y_bot: float, y_top: float,
+               color: str) -> None:
+    """BFS-positioned binary tree nodes."""
+    if not nodes:
+        ax.text(0.5, (y_bot + y_top) / 2, "None",
+                ha="center", va="center", color=TEXT3, fontsize=9)
+        return
+
+    h_range = y_top - y_bot
+    max_depth = max(n["depth"] for n in nodes) if nodes else 0
+    max_depth = max(max_depth, 1)
+
+    # Map (depth, index) → x,y position
+    def pos(depth, idx):
+        width_slots = 2 ** (max_depth + 1)
+        x = idx / width_slots
+        y = y_top - (depth / max_depth) * h_range * 0.9
+        return x, y
+
+    node_pos = {}
+    for nd in nodes[:31]:          # cap at 31 nodes
+        d, i = nd["depth"], nd["index"]
+        x, y = pos(d, i)
+        node_pos[(d, i)] = (x, y)
+
+        # Draw edge to parent
+        if d > 0:
+            parent_i = i // 2
+            pk = (d - 1, parent_i)
+            if pk in node_pos:
+                px, py = node_pos[pk]
+                ax.plot([px, x], [py, y], color=color, lw=0.9, alpha=0.6)
+
+        # Node circle
+        circle = plt.Circle((x, y), radius=0.025 / max(max_depth, 1) * 2,
+                             color=color + "55", ec=color, lw=1.2)
+        ax.add_patch(circle)
+        ax.text(x, y, str(nd["val"])[:3],
+                ha="center", va="center",
+                fontsize=max(5, 8 - max_depth),
+                color=TEXT, fontfamily="monospace")
+
+
+def _draw_graph_summary(ax, nodes: list, edges: list, y: float,
+                        color: str) -> None:
+    """Simple text summary for graphs (full layout is expensive)."""
+    n_nodes = len(nodes)
+    n_edges = len(edges)
+    ax.text(0.5, y + 0.04,
+            f"Nodes: {', '.join(str(n) for n in nodes[:8])}{',...' if n_nodes>8 else ''}",
+            ha="center", va="center", fontsize=7.5, color=TEXT,
+            fontfamily="monospace")
+    ax.text(0.5, y - 0.04,
+            f"Edges: {n_edges}  e.g. {' '.join(f'{a}->{b}' for a,b in edges[:3])}",
+            ha="center", va="center", fontsize=7.5, color=color,
+            fontfamily="monospace")
+
+
+def _draw_set_strip(ax, elements: list, y: float, color: str) -> None:
+    """Pill badges for Set / Dict keys."""
+    x = 0.06
+    for el in elements[:12]:
+        label = str(el)[:8]
+        w = len(label) * 0.013 + 0.03
+        rect = mpatches.FancyBboxPatch(
+            (x, y - 0.045), w, 0.09,
+            boxstyle="round,pad=0.008",
+            facecolor=color + "44", edgecolor=color, linewidth=1)
+        ax.add_patch(rect)
+        ax.text(x + w / 2, y, label,
+                ha="center", va="center",
+                fontsize=7, color=TEXT, fontfamily="monospace")
+        x += w + 0.015
+        if x > 0.92:
+            break
+
+
 
 
 def _render_title_frame(language: str, mode: str, total_steps: int) -> np.ndarray:
