@@ -628,21 +628,37 @@ if st.session_state.run_trigger:
             st.write(f"💾 Timeline saved — **{total_evs} events** → `assets/timeline.json`")
 
             # ── Step 2: Render Video ──────────────────────────
-            st.write("Rendering video frames...")
+            st.write("🎬 Rendering timeline-driven animation...")
             try:
-                from components.video_renderer import generate_video
-                out_path = os.path.join(out_dir, "tracex_output.mp4")
-                generate_video(
-                    steps=steps,
-                    source=run_source if lang == "Python" else code,
-                    language=lang,
-                    mode=st.session_state.exec_mode,
-                    error=error,
-                    output_path=out_path,
+                from components.video_renderer import (
+                    generate_video,
+                    generate_video_from_timeline,
                 )
+                out_path = os.path.join(out_dir, "tracex_output.mp4")
+                tl_result = st.session_state.get("timeline_result")
+
+                if lang == "Python" and tl_result:
+                    # ✅ NEW: event-driven video — each event gets its own frame
+                    generate_video_from_timeline(
+                        timeline_result=tl_result,
+                        source=run_source,
+                        language=lang,
+                        mode=st.session_state.exec_mode,
+                        output_path=out_path,
+                    )
+                else:
+                    # Fallback for C++/Java or when timeline unavailable
+                    generate_video(
+                        steps=steps,
+                        source=run_source if lang == "Python" else code,
+                        language=lang,
+                        mode=st.session_state.exec_mode,
+                        error=error,
+                        output_path=out_path,
+                    )
                 st.session_state.video_path  = out_path
                 st.session_state.trace_error = error
-                st.write("Video rendered  tracex_output.mp4")
+                st.write("✅ Video rendered → `tracex_output.mp4`")
             except Exception as exc:
                 import traceback
                 st.error(f"Video render failed: {exc}")

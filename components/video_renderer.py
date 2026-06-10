@@ -839,3 +839,620 @@ def generate_video(
     )
 
     return output_path
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  TIMELINE-DRIVEN VIDEO GENERATOR
+#  Each timeline event → dedicated animated frame with event-specific card.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Seconds to display each event type
+_EV_SECS = {
+    "line_execute"       : 1.0,
+    "variable_set"       : 0.6,
+    "variable_change"    : 0.6,
+    "array_update"       : 1.5,
+    "array_append"       : 1.5,
+    "array_pop"          : 1.0,
+    "matrix_cell_update" : 1.5,
+    "loop_start"         : 2.0,
+    "loop_iteration"     : 1.5,
+    "loop_end"           : 1.0,
+    "condition_check"    : 2.0,
+    "function_call"      : 1.5,
+    "function_return"    : 1.5,
+    "output"             : 1.5,
+    "final_output"       : 0.0,
+}
+
+_EV_LABEL = {
+    "line_execute"       : "LINE",
+    "variable_set"       : "SET",
+    "variable_change"    : "CHANGED",
+    "array_update"       : "ARRAY UPD",
+    "array_append"       : "APPEND",
+    "array_pop"          : "POP",
+    "matrix_cell_update" : "MATRIX",
+    "loop_start"         : "LOOP START",
+    "loop_iteration"     : "LOOP ITER",
+    "loop_end"           : "LOOP END",
+    "condition_check"    : "CONDITION",
+    "function_call"      : "CALL",
+    "function_return"    : "RETURN",
+    "output"             : "OUTPUT",
+}
+
+_EV_COLORS_TL = {
+    "line_execute"       : "#06B6D4",
+    "variable_set"       : "#10B981",
+    "variable_change"    : "#F97316",
+    "array_update"       : "#60A5FA",
+    "array_append"       : "#38BDF8",
+    "array_pop"          : "#93C5FD",
+    "matrix_cell_update" : "#FBBF24",
+    "loop_start"         : "#A78BFA",
+    "loop_iteration"     : "#C4B5FD",
+    "loop_end"           : "#7C3AED",
+    "condition_check"    : "#F59E0B",
+    "function_call"      : "#818CF8",
+    "function_return"    : "#6EE7B7",
+    "output"             : "#86EFAC",
+}
+
+
+def _tl_norm(frame):
+    """Force exactly 1600×912."""
+    h, w = frame.shape[:2]
+    if h < 912:
+        frame = np.vstack([frame, np.zeros((912 - h, w, 3), dtype=np.uint8)])
+    elif h > 912:
+        frame = frame[:912]
+    h, w = frame.shape[:2]
+    if w < 1600:
+        frame = np.hstack([frame, np.zeros((h, 1600 - w, 3), dtype=np.uint8)])
+    elif w > 1600:
+        frame = frame[:, :1600]
+    return frame.astype(np.uint8)
+
+
+def _tl_panel(ax, title="", accent=None):
+    accent = accent or BORDER
+    ax.set_facecolor(BG3)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(accent)
+        sp.set_linewidth(1.8)
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    if title:
+        ax.set_title(f"  {title}", loc="left", fontsize=9,
+                     color=TEXT3, pad=5, fontweight="bold")
+
+
+def _tl_title_bar(fig, ev_type, ev_label, seq, total, ev_color, note=""):
+    fig.text(0.03, 0.968, "TraceX", fontsize=15, fontweight="bold",
+             color=VIOLET, va="center", fontfamily="DejaVu Sans")
+    fig.text(0.14, 0.968, f"  {ev_label}  ", fontsize=8, fontweight="bold",
+             color=BG, va="center", ha="left",
+             bbox=dict(boxstyle="round,pad=0.3", facecolor=ev_color, edgecolor="none"))
+    if note:
+        fig.text(0.5, 0.968, note[:72], fontsize=9, color=TEXT2,
+                 ha="center", va="center", style="italic")
+    fig.text(0.97, 0.968, f"Event {seq} / {total}",
+             fontsize=9, color=TEXT3, ha="right", va="center", fontweight="bold")
+    bar = fig.add_axes([0.03, 0.948, 0.94, 0.009])
+    bar.set_facecolor(BG2); bar.set_xlim(0, 1); bar.set_ylim(0, 1)
+    bar.axvspan(0, seq / max(total, 1), color=ev_color, alpha=0.9)
+    bar.axis("off")
+
+
+def _tl_code_panel(ax, source_lines, cur_line, ev_color):
+    ax.set_xlim(0, 1)
+    vis_start = max(0, cur_line - 9)
+    vis_lines = source_lines[vis_start: vis_start + 22]
+    n = len(vis_lines)
+    ax.set_ylim(-0.5, max(n - 0.5, 0.5))
+    _tl_panel(ax, "Source Code", ev_color)
+
+    for i, text in enumerate(vis_lines):
+        abs_ln = vis_start + i + 1
+        is_cur = (abs_ln == cur_line)
+        row_y  = n - 1 - i
+
+        if is_cur:
+            ax.axhspan(row_y - 0.48, row_y + 0.48, color=ev_color, alpha=0.22, zorder=0)
+            ax.plot([0, 0.007], [row_y, row_y], color=ev_color, lw=5,
+                    solid_capstyle="butt", zorder=3)
+            ax.text(0.010, row_y, "▶", fontsize=9, color=ev_color, va="center", zorder=4)
+
+        ax.text(0.022, row_y, f"{abs_ln:>3}",
+                fontsize=7.5, va="center", fontfamily="monospace",
+                color=ev_color if is_cur else TEXT3,
+                fontweight="bold" if is_cur else "normal")
+        ax.text(0.068, row_y, text[:70],
+                fontsize=8.0, color=TEXT if is_cur else TEXT2,
+                va="center", fontfamily="monospace",
+                fontweight="bold" if is_cur else "normal")
+
+
+def _tl_vars_mini(ax, cum_vars, changed_keys, ev_color, cum_stdout=""):
+    """Mini vars panel for line_execute frames."""
+    _tl_panel(ax, "Variables", ev_color)
+    ax.set_xlim(0, 1)
+    display = {k: v for k, v in cum_vars.items()
+               if k not in ("_",) and not k.startswith("__")}
+    items = list(display.items())
+    n = len(items)
+    ax.set_ylim(-0.5, max(n - 0.5, 0.5))
+    if not items:
+        ax.text(0.5, 0.5, "No variables yet", ha="center", va="center",
+                color=TEXT3, fontsize=9, transform=ax.transAxes)
+    else:
+        for i, (k, v) in enumerate(items[:10]):
+            row = n - 1 - i
+            changed = k in changed_keys
+            kc  = CHANGED if changed else VIOLET
+            vc  = CHANGED if changed else CYAN
+            bd  = CHANGED if changed else PURPLE
+            ax.add_patch(mpatches.FancyBboxPatch((0.01, row-0.38), 0.26, 0.76,
+                         boxstyle="round,pad=0.02", facecolor=BG2,
+                         edgecolor=bd, linewidth=1.4 if changed else 0.8))
+            ax.text(0.14, row, k, ha="center", va="center", color=kc,
+                    fontsize=7.5, fontfamily="monospace", fontweight="bold")
+            ax.add_patch(mpatches.FancyBboxPatch((0.29, row-0.38), 0.69, 0.76,
+                         boxstyle="round,pad=0.02",
+                         facecolor="#1A0A00" if changed else "#0A1628",
+                         edgecolor=bd, linewidth=1.4 if changed else 0.8))
+            ax.text(0.635, row, v[:34], ha="center", va="center", color=vc,
+                    fontsize=7.0, fontfamily="monospace",
+                    fontweight="bold" if changed else "normal")
+            if changed:
+                ax.text(0.965, row, "★", ha="center", va="center",
+                        color=CHANGED, fontsize=9)
+    if cum_stdout:
+        out_lines = cum_stdout.strip().split("\n")
+        preview = "  ▸  ".join(out_lines[-2:])
+        ax.text(0.5, -0.65, f"stdout: {preview[:70]}", ha="center", va="center",
+                color=GREEN, fontsize=7.0, fontfamily="monospace",
+                fontweight="bold", transform=ax.transAxes, clip_on=False)
+
+
+# ── Event Card helpers ──────────────────────────────────────────────────
+
+def _card_big(ax, header, body1, body2="", body3="",
+              ev_color=CYAN, body1_color=None, body2_color=None):
+    """Generic big-card layout used by most event types."""
+    ax.set_facecolor(BG2)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    bc1 = body1_color or TEXT
+    bc2 = body2_color or TEXT2
+
+    ax.text(0.5, 0.90, header, ha="center", va="center",
+            fontsize=10, color=ev_color, fontweight="bold", fontfamily="monospace",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor=BG3,
+                      edgecolor=ev_color, lw=1.2))
+    if body1:
+        ax.add_patch(mpatches.FancyBboxPatch((0.04, 0.55), 0.92, 0.26,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.68, body1[:55], ha="center", va="center",
+                fontsize=12, color=bc1, fontfamily="monospace", fontweight="bold")
+    if body2:
+        ax.add_patch(mpatches.FancyBboxPatch((0.04, 0.22), 0.92, 0.26,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.35, body2[:55], ha="center", va="center",
+                fontsize=11, color=bc2, fontfamily="monospace",
+                fontweight="bold" if body2_color else "normal")
+    if body3:
+        ax.text(0.5, 0.10, body3, ha="center", va="center",
+                fontsize=8, color=TEXT3, fontfamily="monospace")
+
+
+def _tl_render_event_card(ax, ev, ev_color, cum_vars):
+    """Dispatch to the right card for this event type."""
+    ev_t = ev.get("event")
+
+    # ── CONDITION ──────────────────────────────────────────────
+    if ev_t == "condition_check":
+        result  = ev.get("result")
+        expr    = ev.get("expression", "?")
+        res_txt = "✅  TRUE" if result else "❌  FALSE"
+        res_col = GREEN if result else ROSE
+        _card_big(ax, "CONDITION CHECK",
+                  f"if  {expr[:48]}",
+                  res_txt,
+                  f"line {ev.get('line','')}",
+                  ev_color=ev_color,
+                  body1_color=TEXT,
+                  body2_color=res_col)
+
+    # ── LOOP ───────────────────────────────────────────────────
+    elif ev_t == "loop_start":
+        lv = ev.get("loop_var", "?")
+        it = ev.get("iterable", ev.get("condition", "?"))
+        _card_big(ax, "🔄  LOOP START",
+                  f"for  {lv}",
+                  f"in  {it[:45]}",
+                  f"line {ev.get('line','')}",
+                  ev_color=ev_color,
+                  body1_color=TEXT, body2_color=VIOLET)
+
+    elif ev_t == "loop_iteration":
+        n  = ev.get("iteration", "?")
+        lv = ev.get("loop_var", "?")
+        vl = str(ev.get("value", ev.get("result", "?")))
+        _card_big(ax, f"🔄  ITERATION  #{n}",
+                  f"{lv}  =  {vl[:35]}",
+                  body_color=None,
+                  ev_color=ev_color,
+                  body1_color="#C4B5FD")
+
+    elif ev_t == "loop_end":
+        _card_big(ax, "🔄  LOOP COMPLETE",
+                  f"{ev.get('iterations','?')} iterations done",
+                  ev_color=ev_color, body1_color="#7C3AED")
+
+    # ── FUNCTION ───────────────────────────────────────────────
+    elif ev_t == "function_call":
+        args = ", ".join(f"{k}={v}" for k, v in ev.get("arguments",{}).items())
+        _card_big(ax, "📞  FUNCTION CALL",
+                  f"{ev.get('function','?')}()",
+                  args[:55] or "(no args)",
+                  f"line {ev.get('line','')}",
+                  ev_color=ev_color,
+                  body1_color="#818CF8", body2_color=TEXT2)
+
+    elif ev_t == "function_return":
+        _card_big(ax, "↩️  RETURN",
+                  f"{ev.get('function','?')}()",
+                  f"→  {ev.get('value','?')[:45]}",
+                  f"line {ev.get('line','')}",
+                  ev_color=ev_color,
+                  body1_color="#6EE7B7", body2_color=GREEN)
+
+    # ── ARRAY ──────────────────────────────────────────────────
+    elif ev_t in ("array_update", "array_append", "array_pop"):
+        var = ev.get("var", "?")
+        if ev_t == "array_update":
+            hdr  = f"🔵  ARRAY UPDATE  ·  {var}"
+            desc = f"[{ev.get('index')}]  {ev.get('old_value')} → {ev.get('new_value')}"
+        elif ev_t == "array_append":
+            hdr  = f"🔵  APPEND  ·  {var}"
+            desc = f"append({ev.get('value')})  → len={ev.get('new_len')}"
+        else:
+            hdr  = f"🔵  POP  ·  {var}"
+            desc = f"len {ev.get('old_len')} → {ev.get('new_len')}"
+
+        ax.set_facecolor(BG2)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+        ax.text(0.5, 0.90, hdr, ha="center", va="center",
+                fontsize=10, color=ev_color, fontweight="bold", fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor=BG3,
+                          edgecolor=ev_color, lw=1.2))
+
+        # Draw array boxes
+        raw = cum_vars.get(var, "")
+        try:
+            import ast as _ast
+            arr = _ast.literal_eval(raw)
+            if not isinstance(arr, list): raise ValueError
+        except Exception:
+            arr = []
+        n_el = len(arr)
+        if 0 < n_el <= 20:
+            bw     = min(0.88 / n_el, 0.10)
+            ox     = (1 - n_el * bw) / 2
+            hi_idx = ev.get("index", -1)
+            for idx, val in enumerate(arr):
+                x    = ox + idx * bw
+                is_h = (idx == hi_idx)
+                ax.add_patch(mpatches.FancyBboxPatch(
+                    (x + 0.005, 0.48), bw - 0.012, 0.22,
+                    boxstyle="round,pad=0.01",
+                    facecolor="#1c3d5a" if is_h else BG3,
+                    edgecolor=ev_color if is_h else BORDER,
+                    linewidth=2.0 if is_h else 0.8))
+                ax.text(x + bw/2, 0.59, str(val)[:5],
+                        ha="center", va="center", fontsize=9,
+                        color=ev_color if is_h else CYAN,
+                        fontfamily="monospace",
+                        fontweight="bold" if is_h else "normal")
+                ax.text(x + bw/2, 0.46, str(idx),
+                        ha="center", va="center", fontsize=7, color=TEXT3)
+
+        ax.add_patch(mpatches.FancyBboxPatch((0.05, 0.16), 0.90, 0.20,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.26, desc, ha="center", va="center",
+                fontsize=11, color=ev_color, fontfamily="monospace", fontweight="bold")
+
+    # ── MATRIX ─────────────────────────────────────────────────
+    elif ev_t == "matrix_cell_update":
+        var   = ev.get("var", "?")
+        row_i = ev.get("row", 0)
+        col_i = ev.get("col", 0)
+        desc  = f"[{row_i}][{col_i}]  {ev.get('old_value')} → {ev.get('new_value')}"
+
+        ax.set_facecolor(BG2)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+        ax.text(0.5, 0.90, f"🟡  MATRIX UPDATE  ·  {var}",
+                ha="center", va="center",
+                fontsize=10, color=ev_color, fontweight="bold", fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor=BG3,
+                          edgecolor=ev_color, lw=1.2))
+
+        raw = cum_vars.get(var, "")
+        try:
+            import ast as _ast
+            mat = _ast.literal_eval(raw)
+            if isinstance(mat, list) and mat and isinstance(mat[0], list):
+                rows_n = len(mat); cols_n = len(mat[0])
+                cell_h = min(0.48 / rows_n, 0.14)
+                cell_w = min(0.82 / cols_n, 0.14)
+                ox     = (1 - cols_n * cell_w) / 2
+                oy     = 0.28
+                for r in range(rows_n):
+                    for c in range(cols_n):
+                        x    = ox + c * cell_w
+                        y    = oy + (rows_n - 1 - r) * cell_h
+                        is_h = (r == row_i and c == col_i)
+                        ax.add_patch(mpatches.FancyBboxPatch(
+                            (x+0.005, y+0.005), cell_w-0.010, cell_h-0.010,
+                            boxstyle="round,pad=0.01",
+                            facecolor="#1c3d5a" if is_h else BG3,
+                            edgecolor=ev_color if is_h else BORDER,
+                            linewidth=2.0 if is_h else 0.6))
+                        ax.text(x + cell_w/2, y + cell_h/2, str(mat[r][c])[:4],
+                                ha="center", va="center", fontsize=8,
+                                color=ev_color if is_h else TEXT2,
+                                fontfamily="monospace",
+                                fontweight="bold" if is_h else "normal")
+        except Exception:
+            pass
+
+        ax.add_patch(mpatches.FancyBboxPatch((0.05, 0.08), 0.90, 0.16,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.16, desc, ha="center", va="center",
+                fontsize=11, color=ev_color, fontfamily="monospace", fontweight="bold")
+
+    # ── OUTPUT ─────────────────────────────────────────────────
+    elif ev_t == "output":
+        ax.set_facecolor(BG2)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+
+        ax.text(0.5, 0.88, "🖨️  PROGRAM OUTPUT", ha="center", va="center",
+                fontsize=10, color=ev_color, fontweight="bold", fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor=BG3,
+                          edgecolor=ev_color, lw=1.2))
+        ax.add_patch(mpatches.FancyBboxPatch((0.04, 0.52), 0.92, 0.26,
+                     boxstyle="round,pad=0.02", facecolor="#052e16",
+                     edgecolor=ev_color, linewidth=1.5))
+        ax.text(0.5, 0.65, f">>> {ev.get('text','')[:52]}",
+                ha="center", va="center",
+                fontsize=13, color=GREEN, fontfamily="monospace", fontweight="bold")
+
+    # ── VARIABLE SET / CHANGE ───────────────────────────────────
+    elif ev_t in ("variable_set", "variable_change"):
+        name = ev.get("name", "?")
+        val  = ev.get("value", ev.get("new_value", "?"))
+        old  = ev.get("old_value", "")
+        if ev_t == "variable_set":
+            hdr  = "🟢  VARIABLE SET"
+            body = f"{name}  =  {val[:40]}"
+            col  = GREEN
+        else:
+            hdr  = "🟠  VARIABLE CHANGED"
+            body = f"{name}:  {old[:25]} → {val[:25]}"
+            col  = CHANGED
+        _card_big(ax, hdr, body,
+                  f"type: {ev.get('type','?')}",
+                  ev_color=ev_color,
+                  body1_color=col, body2_color=TEXT3)
+
+    # ── FALLBACK ────────────────────────────────────────────────
+    else:
+        ax.set_facecolor(BG2)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+        ax.text(0.5, 0.5, ev_t.replace("_", "\n").upper(),
+                ha="center", va="center", fontsize=14,
+                color=ev_color, fontfamily="monospace", fontweight="bold")
+
+
+def _card_big(ax, header, body1="", body2="", body3="",
+              ev_color=CYAN, body1_color=None, body2_color=None,
+              body_color=None):
+    """Generic two-body card."""
+    if body_color and not body1_color:
+        body1_color = body_color
+    body1_color = body1_color or TEXT
+    body2_color = body2_color or TEXT2
+    ax.set_facecolor(BG2)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(ev_color); sp.set_linewidth(2)
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1)
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    ax.text(0.5, 0.90, header, ha="center", va="center",
+            fontsize=10, color=ev_color, fontweight="bold", fontfamily="monospace",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor=BG3, edgecolor=ev_color, lw=1.2))
+    if body1:
+        ax.add_patch(mpatches.FancyBboxPatch((0.04, 0.55), 0.92, 0.26,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.68, body1[:55], ha="center", va="center",
+                fontsize=12, color=body1_color, fontfamily="monospace", fontweight="bold")
+    if body2:
+        ax.add_patch(mpatches.FancyBboxPatch((0.04, 0.22), 0.92, 0.26,
+                     boxstyle="round,pad=0.02", facecolor=BG3,
+                     edgecolor=ev_color, linewidth=1))
+        ax.text(0.5, 0.35, body2[:55], ha="center", va="center",
+                fontsize=11, color=body2_color, fontfamily="monospace",
+                fontweight="bold" if body2_color else "normal")
+    if body3:
+        ax.text(0.5, 0.10, body3, ha="center", va="center",
+                fontsize=8, color=TEXT3, fontfamily="monospace")
+
+
+# ── Frame builder ───────────────────────────────────────────────────────────
+
+def _tl_build_frame(ev, source_lines, total_evs,
+                    cum_vars, cum_structs, cum_stdout, cur_line, changed_keys):
+    ev_t     = ev.get("event", "line_execute")
+    ev_color = _EV_COLORS_TL.get(ev_t, CYAN)
+    ev_label = _EV_LABEL.get(ev_t, ev_t.upper())
+    seq      = ev.get("seq", 0)
+    note     = ev.get("code", ev.get("expression", ev.get("text", "")))
+
+    fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
+    _ensure_912(fig)
+
+    is_line = (ev_t == "line_execute")
+
+    if is_line:
+        gs = GridSpec(4, 2, figure=fig,
+                      left=0.03, right=0.97, top=0.92, bottom=0.05,
+                      hspace=0.42, wspace=0.06,
+                      height_ratios=[2.5, 1.6, 1.6, 0.8])
+        ax_code   = fig.add_subplot(gs[:, 0])
+        ax_vars   = fig.add_subplot(gs[0, 1])
+        ax_struct = fig.add_subplot(gs[1:3, 1])
+        ax_stack  = fig.add_subplot(gs[3, 1])
+
+        _tl_code_panel(ax_code, source_lines, cur_line, ev_color)
+        _tl_vars_mini(ax_vars, cum_vars, changed_keys, ev_color, cum_stdout)
+
+        # Structures (empty for timeline mode — no detector hooked in)
+        _tl_panel(ax_struct, "Data Structures", BORDER)
+        ax_struct.set_xlim(0, 1); ax_struct.set_ylim(0, 1); ax_struct.axis("off")
+        if cum_structs:
+            _draw_structures(ax_struct, cum_structs[:3])
+        else:
+            ax_struct.text(0.5, 0.5, "Structures appear as code runs",
+                           ha="center", va="center", color=TEXT3,
+                           fontsize=9, transform=ax_struct.transAxes)
+
+        # Call stack
+        _tl_panel(ax_stack, "Call Stack", BORDER)
+        ax_stack.set_xlim(0, 1); ax_stack.set_ylim(-0.5, 0.5)
+        ax_stack.text(0.03, 0,
+                      f"▶  <module>()  — line {cur_line}",
+                      va="center", color=ev_color,
+                      fontsize=8.5, fontfamily="monospace", fontweight="bold")
+
+    else:
+        gs = GridSpec(1, 2, figure=fig,
+                      left=0.03, right=0.97, top=0.92, bottom=0.05,
+                      wspace=0.05, width_ratios=[1.1, 0.9])
+        ax_code  = fig.add_subplot(gs[0])
+        ax_event = fig.add_subplot(gs[1])
+
+        _tl_code_panel(ax_code, source_lines, cur_line, ev_color)
+        _tl_render_event_card(ax_event, ev, ev_color, cum_vars)
+
+    _tl_title_bar(fig, ev_t, ev_label, seq, total_evs, ev_color, note)
+
+    frame = _fig_to_rgb(fig)
+    plt.close(fig)
+    return _tl_norm(frame)
+
+
+# ── Public API ──────────────────────────────────────────────────────────────
+
+def generate_video_from_timeline(
+    timeline_result: dict,
+    source: str,
+    language: str,
+    mode: str,
+    output_path: str | None = None,
+) -> str:
+    """
+    Build an MP4 from a rich timeline (output of TimelineGenerator).
+    Each event type gets its own dedicated animated frame.
+
+    Returns the path to the written .mp4 file.
+    """
+    if output_path is None:
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        output_path = tmp.name
+        tmp.close()
+
+    source_lines = source.splitlines()
+    tl           = timeline_result.get("timeline", [])
+    final_stdout = timeline_result.get("stdout", "")
+    error        = timeline_result.get("error")
+
+    # Drop final_output — handled by end frame
+    events = [e for e in tl if e.get("event") != "final_output"]
+    total_evs = len(events)
+
+    # Cumulative state
+    cum_vars     : dict = {}
+    cum_structs  : list = []
+    cum_stdout   : str  = ""
+    cur_line     : int  = 1
+    changed_keys : set  = set()
+
+    def _update(ev):
+        nonlocal cum_stdout, cur_line, changed_keys
+        ev_t = ev.get("event")
+        changed_keys = set()
+        if ev_t == "line_execute":
+            cur_line = ev.get("line", cur_line) or cur_line
+        elif ev_t == "variable_set":
+            name = ev.get("name", "")
+            if name and not name.startswith("__") and name != "_":
+                cum_vars[name] = ev.get("value", "")
+                changed_keys.add(name)
+        elif ev_t == "variable_change":
+            name = ev.get("name", "")
+            if name and not name.startswith("__"):
+                base = name.split("[")[0]
+                cum_vars[base] = ev.get("new_value", cum_vars.get(base, ""))
+                changed_keys.add(base)
+        elif ev_t in ("array_update", "array_append", "array_pop", "matrix_cell_update"):
+            changed_keys.add(ev.get("var", ""))
+        elif ev_t == "output":
+            text = ev.get("text", "")
+            cum_stdout = (cum_stdout + "\n" + text).strip()
+
+    all_frames: list[np.ndarray] = []
+
+    # Intro (3 s)
+    all_frames.extend([_tl_norm(_render_title_frame(language, mode, total_evs))] * (FPS * 3))
+
+    for ev in events:
+        _update(ev)
+
+        ev_t   = ev.get("event", "line_execute")
+        secs   = _EV_SECS.get(ev_t, 1.0)
+        n_frms = max(1, round(secs * FPS))
+
+        frame = _tl_build_frame(
+            ev, source_lines, total_evs,
+            cum_vars, cum_structs, cum_stdout,
+            cur_line, changed_keys,
+        )
+        all_frames.extend([frame] * n_frms)
+
+    # End frame (4 s)
+    all_frames.extend([_tl_norm(_render_end_frame(final_stdout, error))] * (FPS * 4))
+
+    iio.imwrite(output_path, all_frames,
+                fps=FPS, codec="libx264", quality=8, macro_block_size=16)
+    return output_path
