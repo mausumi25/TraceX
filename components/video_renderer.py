@@ -26,9 +26,10 @@ TEXT        = "#E2E8F0"
 TEXT2       = "#94A3B8"
 TEXT3       = "#475569"
 BORDER      = "#2D2B55"
+CHANGED     = "#F97316"   # orange highlight for mutated variables
 
-FPS         = 4          # frames per second (slow enough to read)
-HOLD_FRAMES = 2          # duplicate each step this many times
+FPS         = 2           # 2 fps → each step = 1 second on screen
+HOLD_FRAMES = 2           # frames per step
 
 
 def _hex_to_rgb(h):
@@ -52,18 +53,28 @@ def _ensure_912(fig):
     fig.set_dpi(100)
 
 
-def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.ndarray:
-    """Render a single execution step as an RGB frame — 4-panel layout."""
+def _render_frame(
+    step: dict,
+    source_lines: list[str],
+    total_steps: int,
+    prev_vars: dict | None = None,
+) -> np.ndarray:
+    """
+    Render one dry-run step frame.
+
+    prev_vars  — variable dict from the PREVIOUS step (for change detection).
+                 Any variable whose value differs from prev_vars is highlighted
+                 in orange so the viewer can immediately see what mutated.
+    """
     fig = plt.figure(figsize=(16, 9.12), dpi=100, facecolor=BG)
     gs  = GridSpec(
         4, 2,
         figure=fig,
         left=0.03, right=0.97,
-        top=0.91,  bottom=0.05,
-        hspace=0.38, wspace=0.06,
-        height_ratios=[2.5, 1.5, 1.8, 0.9],
+        top=0.92,  bottom=0.05,
+        hspace=0.40, wspace=0.06,
+        height_ratios=[2.5, 1.5, 1.8, 0.85],
     )
-
     _ensure_912(fig)
 
     ax_code   = fig.add_subplot(gs[:, 0])
@@ -74,114 +85,162 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     for ax in (ax_code, ax_vars, ax_struct, ax_stack):
         ax.set_facecolor(BG3)
         for spine in ax.spines.values():
-            spine.set_edgecolor(BORDER)
-            spine.set_linewidth(1.2)
+            spine.set_edgecolor(BORDER); spine.set_linewidth(1.4)
         ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 
-    # ─── Title bar ───────────────────────────────────────────
+    # ── Event colour + progress ───────────────────────────────
     progress  = step["step"] / max(total_steps, 1)
-    ev_colors = {"call": VIOLET, "return": CYAN, "exception": ROSE, "line": GREEN}
-    ev_color  = ev_colors.get(step["event"], GREEN)
+    ev_map    = {"call": VIOLET, "return": CYAN, "exception": ROSE, "line": GREEN}
+    ev_color  = ev_map.get(step.get("event", "line"), GREEN)
+    ev_label  = {"call": "CALL", "return": "RETURN",
+                 "exception": "ERROR", "line": "LINE"}.get(step.get("event", "line"), "LINE")
 
-    fig.text(0.03, 0.965, "TraceX", fontsize=16, fontweight="bold",
+    # ── Title bar ─────────────────────────────────────────────
+    fig.text(0.03, 0.968, "TraceX", fontsize=15, fontweight="bold",
              color=VIOLET, va="center", fontfamily="DejaVu Sans")
-    fig.text(0.5, 0.965, step["note"], fontsize=10, color=TEXT2,
-             ha="center", va="center")
-    fig.text(0.97, 0.965, f"Step {step['step']} / {total_steps}",
-             fontsize=9, color=TEXT3, ha="right", va="center")
 
-    bar_ax = fig.add_axes([0.03, 0.945, 0.94, 0.008])
-    bar_ax.set_facecolor(BG2)
-    bar_ax.set_xlim(0, 1); bar_ax.set_ylim(0, 1)
-    bar_ax.axvspan(0, progress, ymin=0, ymax=1, color=PURPLE, alpha=0.85)
+    # Event pill
+    fig.text(0.14, 0.968, f"  {ev_label}  ", fontsize=8, fontweight="bold",
+             color=BG, va="center", ha="left",
+             bbox=dict(boxstyle="round,pad=0.3", facecolor=ev_color, edgecolor="none"))
+
+    # Current line note (centre)
+    note = step.get("note", "")
+    fig.text(0.5, 0.968, note[:70], fontsize=9.5, color=TEXT2,
+             ha="center", va="center", style="italic")
+
+    # Step counter (right)
+    fig.text(0.97, 0.968, f"Step  {step['step']} / {total_steps}",
+             fontsize=9, color=TEXT3, ha="right", va="center", fontweight="bold")
+
+    # Progress bar
+    bar_ax = fig.add_axes([0.03, 0.948, 0.94, 0.009])
+    bar_ax.set_facecolor(BG2); bar_ax.set_xlim(0, 1); bar_ax.set_ylim(0, 1)
+    bar_ax.axvspan(0, progress, ymin=0, ymax=1, color=ev_color, alpha=0.9)
     bar_ax.axis("off")
 
-    # ─── Code panel ──────────────────────────────────────────
+    # ── Code panel ────────────────────────────────────────────
     ax_code.set_title("  Source Code", loc="left", fontsize=9,
-                      color=TEXT3, pad=6, fontweight="bold")
+                      color=TEXT3, pad=5, fontweight="bold")
     ax_code.set_xlim(0, 1)
 
-    visible_start = max(0, step["line_no"] - 10)
+    cur_line      = step.get("line_no", 1) or 1
+    visible_start = max(0, cur_line - 9)
     visible_lines = source_lines[visible_start: visible_start + 22]
-    n = len(visible_lines)
-    ax_code.set_ylim(-0.5, max(n - 0.5, 0.5))   # never singular
+    n             = len(visible_lines)
+    ax_code.set_ylim(-0.5, max(n - 0.5, 0.5))
 
     for i, text in enumerate(visible_lines):
         abs_ln     = visible_start + i + 1
-        is_current = (abs_ln == step["line_no"])
+        is_current = (abs_ln == cur_line)
+        row_y      = n - 1 - i
 
         if is_current:
-            ax_code.axhspan(n - 1 - i - 0.45, n - 1 - i + 0.45,
-                            color=ev_color, alpha=0.18)
-            ax_code.plot([0, 0.012], [n - 1 - i, n - 1 - i],
-                         color=ev_color, lw=3, solid_capstyle="round")
+            # Bright highlight band
+            ax_code.axhspan(row_y - 0.48, row_y + 0.48,
+                            color=ev_color, alpha=0.20, zorder=0)
+            # Thick left-edge bar
+            ax_code.plot([0, 0.008], [row_y, row_y],
+                         color=ev_color, lw=5, solid_capstyle="butt", zorder=3)
+            # Animated arrow ▶
+            ax_code.text(0.010, row_y, "▶", fontsize=9, color=ev_color,
+                         va="center", zorder=4)
 
-        ax_code.text(0.018, n - 1 - i, f"{abs_ln:>3}",
-                     fontsize=7.5, color=TEXT3 if not is_current else ev_color,
-                     va="center", fontfamily="monospace")
-        ax_code.text(0.065, n - 1 - i,
-                     text[:72] if len(text) > 72 else text,
-                     fontsize=8,
+        # Line number
+        ax_code.text(0.022, row_y, f"{abs_ln:>3}",
+                     fontsize=7.5, va="center", fontfamily="monospace",
+                     color=ev_color if is_current else TEXT3,
+                     fontweight="bold" if is_current else "normal")
+
+        # Code text
+        ax_code.text(0.068, row_y,
+                     text[:71] if len(text) > 71 else text,
+                     fontsize=8.2,
                      color=TEXT if is_current else TEXT2,
                      va="center", fontfamily="monospace",
                      fontweight="bold" if is_current else "normal")
 
-    # ─── Variables panel ─────────────────────────────────────
+    # ── Variables panel (with change highlighting) ────────────
     ax_vars.set_title("  Variables", loc="left", fontsize=9,
                       color=TEXT3, pad=4, fontweight="bold")
     ax_vars.set_xlim(0, 1)
 
-    variables = step.get("variables", {})
-    items     = list(variables.items())
-    n_vars    = len(items)
-    ax_vars.set_ylim(-0.5, max(n_vars - 0.5, 0.5))   # never singular
+    variables  = step.get("variables", {})
+    prev       = prev_vars or {}
+
+    # Filter noise: skip _ (comprehension), skip callables represented as <...>
+    display_vars = {
+        k: v for k, v in variables.items()
+        if k not in ("_",) and not k.startswith("__")
+    }
+
+    items  = list(display_vars.items())
+    n_vars = len(items)
+    ax_vars.set_ylim(-0.5, max(n_vars - 0.5, 0.5))
 
     if not items:
         ax_vars.text(0.5, 0.5, "No variables yet",
                      ha="center", va="center", color=TEXT3,
                      fontsize=9, transform=ax_vars.transAxes)
     else:
-        for i, (k, v) in enumerate(items[:8]):
-            row  = n_vars - 1 - i
-            rect = mpatches.FancyBboxPatch(
-                (0.01, row - 0.35), 0.28, 0.7,
-                boxstyle="round,pad=0.02",
-                facecolor=BG2, edgecolor=PURPLE, linewidth=0.8)
-            ax_vars.add_patch(rect)
-            ax_vars.text(0.15, row, k, ha="center", va="center",
-                         color=VIOLET, fontsize=8, fontfamily="monospace",
-                         fontweight="bold")
-            rect2 = mpatches.FancyBboxPatch(
-                (0.31, row - 0.35), 0.67, 0.7,
-                boxstyle="round,pad=0.02",
-                facecolor="#0A1628", edgecolor=BORDER, linewidth=0.8)
-            ax_vars.add_patch(rect2)
-            ax_vars.text(0.645, row,
-                         v[:38] if len(v) > 38 else v,
-                         ha="center", va="center",
-                         color=CYAN, fontsize=7.5, fontfamily="monospace")
+        for i, (k, v) in enumerate(items[:9]):
+            row      = n_vars - 1 - i
+            changed  = prev.get(k) != v    # True if new or mutated this step
+            k_color  = CHANGED if changed else VIOLET
+            v_color  = CHANGED if changed else CYAN
+            k_border = CHANGED if changed else PURPLE
+            v_bg     = "#1A0A00" if changed else "#0A1628"
 
+            # Key box
+            rect = mpatches.FancyBboxPatch(
+                (0.01, row - 0.38), 0.26, 0.76,
+                boxstyle="round,pad=0.02",
+                facecolor=BG2, edgecolor=k_border, linewidth=1.2 if changed else 0.8)
+            ax_vars.add_patch(rect)
+            ax_vars.text(0.14, row, k,
+                         ha="center", va="center", color=k_color,
+                         fontsize=8, fontfamily="monospace", fontweight="bold")
+
+            # Value box
+            rect2 = mpatches.FancyBboxPatch(
+                (0.29, row - 0.38), 0.69, 0.76,
+                boxstyle="round,pad=0.02",
+                facecolor=v_bg, edgecolor=k_border, linewidth=1.2 if changed else 0.8)
+            ax_vars.add_patch(rect2)
+            ax_vars.text(0.635, row,
+                         v[:36] if len(v) > 36 else v,
+                         ha="center", va="center", color=v_color,
+                         fontsize=7.5, fontfamily="monospace",
+                         fontweight="bold" if changed else "normal")
+
+            # ★ badge for newly changed vars
+            if changed:
+                ax_vars.text(0.955, row, "★",
+                             ha="center", va="center",
+                             color=CHANGED, fontsize=9)
+
+    # Stdout strip
     stdout_text = step.get("stdout", "").strip()
     if stdout_text:
-        last = stdout_text.split("\n")[-2:]
-        ax_vars.text(0.5, -0.55,
-                     "stdout  " + " | ".join(last)[:70],
+        out_lines = stdout_text.split("\n")
+        # Show last 3 lines of output
+        preview = "  ▸  ".join(out_lines[-3:])
+        ax_vars.text(0.5, -0.60,
+                     f"stdout: {preview[:72]}",
                      ha="center", va="center", color=GREEN,
-                     fontsize=7, fontfamily="monospace",
+                     fontsize=7.5, fontfamily="monospace",
+                     fontweight="bold",
                      transform=ax_vars.transAxes, clip_on=False)
 
-    # ─── Data Structures panel ────────────────────────────────
+    # ── Data Structures panel ─────────────────────────────────
     ax_struct.set_title("  Data Structures", loc="left", fontsize=9,
-                         color=TEXT3, pad=4, fontweight="bold")
-    ax_struct.set_xlim(0, 1)
-    ax_struct.set_ylim(0, 1)
+                        color=TEXT3, pad=4, fontweight="bold")
+    ax_struct.set_xlim(0, 1); ax_struct.set_ylim(0, 1)
     ax_struct.axis("off")
 
     structures  = step.get("structures", [])
-    interesting = [
-        s for s in structures
-        if s["kind"] not in ("Primitive", "Unknown", "String")
-    ]
+    interesting = [s for s in structures
+                   if s["kind"] not in ("Primitive", "Unknown", "String")]
 
     if not interesting:
         ax_struct.text(0.5, 0.5, "No complex structures yet",
@@ -190,22 +249,22 @@ def _render_frame(step: dict, source_lines: list[str], total_steps: int) -> np.n
     else:
         _draw_structures(ax_struct, interesting[:3])
 
-    # ─── Call Stack panel ─────────────────────────────────────
+    # ── Call Stack panel ──────────────────────────────────────
     ax_stack.set_title("  Call Stack", loc="left", fontsize=9,
                        color=TEXT3, pad=4, fontweight="bold")
     ax_stack.set_xlim(0, 1)
 
-    stack = step.get("call_stack", [])
-    if not stack:
-        stack = [{"name": "<module>", "line": step["line_no"]}]
+    stack = step.get("call_stack", []) or [{"name": "<module>", "line": cur_line}]
+    ax_stack.set_ylim(-0.5, max(len(stack) - 0.5, 0.5))
 
-    ax_stack.set_ylim(-0.5, len(stack) - 0.5)
-    for i, frame in enumerate(stack):
-        col   = VIOLET if i == len(stack) - 1 else TEXT2
-        label = f"{'-> ' if i == len(stack)-1 else '   '}{frame['name']}()  line {frame['line']}"
-        ax_stack.text(0.03, i, label, va="center", color=col,
+    for i, fr in enumerate(stack):
+        is_top = (i == len(stack) - 1)
+        col    = ev_color if is_top else TEXT2
+        prefix = "▶  " if is_top else "   "
+        label  = f"{prefix}{fr['name']}()  — line {fr['line']}"
+        ax_stack.text(0.03, i, label[:65], va="center", color=col,
                       fontsize=8.5, fontfamily="monospace",
-                      fontweight="bold" if i == len(stack) - 1 else "normal")
+                      fontweight="bold" if is_top else "normal")
 
     frame_rgb = _fig_to_rgb(fig)
     plt.close(fig)
@@ -756,9 +815,16 @@ def generate_video(
     # Intro 3 seconds
     all_frames.extend([_norm(_render_title_frame(language, mode, total_steps))] * (FPS * 3))
 
-    # Step frames
+    # Step frames — pass prev_vars for change-highlighting
+    prev_vars = {}
     for step in enriched_steps:
-        all_frames.extend([_norm(_render_frame(step, source_lines, total_steps))] * HOLD_FRAMES)
+        frame = _norm(_render_frame(step, source_lines, total_steps, prev_vars))
+        all_frames.extend([frame] * HOLD_FRAMES)
+        # Update prev_vars (filter noise same as renderer)
+        prev_vars = {
+            k: v for k, v in step.get('variables', {}).items()
+            if k not in ('_',) and not k.startswith('__')
+        }
 
     # End frame 4 seconds
     all_frames.extend([_norm(_render_end_frame(final_stdout, error))] * (FPS * 4))

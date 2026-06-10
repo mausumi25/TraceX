@@ -1,97 +1,26 @@
 [
   {
     "step": 1,
-    "line": 29,
-    "line_no": 29,
-    "line_text": "string s = \"(()\";",
-    "event": "line",
-    "variables": {
-      "sol": "{<No data fields>}",
-      "s": "{004, 001, 0, 000, 033, 000}",
-      "res": "4201307"
-    },
-    "loops": [],
-    "call_stack": [
-      {
-        "name": "main",
-        "line": 29,
-        "args": {}
-      }
-    ],
-    "stdout": "",
-    "func_call": null,
-    "return_val": null,
-    "error": null,
-    "note": "Line 29  string s = \"(()\";",
-    "phase": "run"
-  },
-  {
-    "step": 2,
-    "line": 30,
-    "line_no": 30,
-    "line_text": "auto res = sol.longestValidParentheses(s);",
-    "event": "line",
-    "variables": {
-      "sol": "{<No data fields>}",
-      "s": "{3, 000}",
-      "res": "4201307"
-    },
-    "loops": [],
-    "call_stack": [
-      {
-        "name": "main",
-        "line": 30,
-        "args": {}
-      }
-    ],
-    "stdout": "",
-    "func_call": null,
-    "return_val": null,
-    "error": null,
-    "note": "Line 30  auto res = sol.longestValidParentheses(s);",
-    "phase": "run"
-  },
-  {
-    "step": 3,
-    "line": 31,
-    "line_no": 31,
-    "line_text": "cout << res << endl;",
-    "event": "line",
-    "variables": {
-      "sol": "{<No data fields>}",
-      "s": "{3, 000}",
-      "res": "2"
-    },
-    "loops": [],
-    "call_stack": [
-      {
-        "name": "main",
-        "line": 31,
-        "args": {}
-      }
-    ],
-    "stdout": "",
-    "func_call": null,
-    "return_val": null,
-    "error": null,
-    "note": "Line 31  cout << res << endl;",
-    "phase": "run"
-  },
-  {
-    "step": 4,
     "line": 32,
     "line_no": 32,
-    "line_text": "return 0;",
+    "line_text": "int n = 4;",
     "event": "line",
     "variables": {
       "sol": "{<No data fields>}",
-      "s": "{3, 000}",
-      "res": "2"
+      "n": "4201179",
+      "res": "{1408, 024, 000}"
     },
-    "loops": [],
+    "loops": [
+      {
+        "var": "n",
+        "value": "4201179",
+        "iteration": 0,
+        "line": 32
+      }
+    ],
     "call_stack": [
       {
-        "name": "_fu0___ZSt4cout",
+        "name": "main",
         "line": 32,
         "args": {}
       }
@@ -100,25 +29,32 @@
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Line 32  return 0;",
+    "note": "Line 32  int n = 4;",
     "phase": "run"
   },
   {
-    "step": 5,
-    "line": 29,
-    "line_no": 29,
-    "line_text": "string s = \"(()\";",
+    "step": 2,
+    "line": 33,
+    "line_no": 33,
+    "line_text": "auto res = sol.countAndSay(n);",
     "event": "line",
     "variables": {
       "sol": "{<No data fields>}",
-      "s": "{3, 000}",
-      "res": "2"
+      "n": "4",
+      "res": "{1408, 024, 000}"
     },
-    "loops": [],
+    "loops": [
+      {
+        "var": "n",
+        "value": "4",
+        "iteration": 1,
+        "line": 33
+      }
+    ],
     "call_stack": [
       {
-        "name": "_fu0___ZSt4cout",
-        "line": 29,
+        "name": "main",
+        "line": 33,
         "args": {}
       }
     ],
@@ -126,21 +62,94 @@
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Line 29  string s = \"(()\";",
+    "note": "Line 33  auto res = sol.countAndSay(n);",
     "phase": "run"
   },
   {
-    "step": 6,
-    "line": 33,
-    "line_no": 33,
-    "line_text": "}",
+    "step": 3,
+    "line": 34,
+    "line_no": 34,
+    "line_text": "cout << res << endl;",
     "event": "line",
     "variables": {
       "sol": "{<No data fields>}",
-      "s": "{3, 000}",
-      "res": "2"
+      "n": "4",
+      "res": "{1211, 4, 1211, 000, 032, 000, 000, 000}"
     },
-    "loops": [],
+    "loops": [
+      {
+        "var": "n",
+        "value": "4",
+        "iteration": 2,
+        "line": 34
+      }
+    ],
+    "call_stack": [
+      {
+        "name": "main",
+        "line": 34,
+        "args": {}
+      }
+    ],
+    "stdout": "",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 34  cout << res << endl;",
+    "phase": "run"
+  },
+  {
+    "step": 4,
+    "line": 35,
+    "line_no": 35,
+    "line_text": "return 0;",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "n": "4",
+      "res": "{1211, 4, 1211, 000, 032, 000, 000, 000}"
+    },
+    "loops": [
+      {
+        "var": "n",
+        "value": "4",
+        "iteration": 3,
+        "line": 35
+      }
+    ],
+    "call_stack": [
+      {
+        "name": "_fu0___ZSt4cout",
+        "line": 35,
+        "args": {}
+      }
+    ],
+    "stdout": "",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 35  return 0;",
+    "phase": "run"
+  },
+  {
+    "step": 5,
+    "line": 33,
+    "line_no": 33,
+    "line_text": "auto res = sol.countAndSay(n);",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "n": "4",
+      "res": "{1211, 4, 1211, 000, 032, 000, 000, 000}"
+    },
+    "loops": [
+      {
+        "var": "n",
+        "value": "4",
+        "iteration": 4,
+        "line": 33
+      }
+    ],
     "call_stack": [
       {
         "name": "_fu0___ZSt4cout",
@@ -148,11 +157,44 @@
         "args": {}
       }
     ],
-    "stdout": "2\n",
+    "stdout": "",
     "func_call": null,
     "return_val": null,
     "error": null,
-    "note": "Line 33  }",
+    "note": "Line 33  auto res = sol.countAndSay(n);",
+    "phase": "run"
+  },
+  {
+    "step": 6,
+    "line": 36,
+    "line_no": 36,
+    "line_text": "}",
+    "event": "line",
+    "variables": {
+      "sol": "{<No data fields>}",
+      "n": "4",
+      "res": "{1211, 4, 1211, 000, 032, 000, 000, 000}"
+    },
+    "loops": [
+      {
+        "var": "n",
+        "value": "4",
+        "iteration": 5,
+        "line": 36
+      }
+    ],
+    "call_stack": [
+      {
+        "name": "_fu0___ZSt4cout",
+        "line": 36,
+        "args": {}
+      }
+    ],
+    "stdout": "1211\n",
+    "func_call": null,
+    "return_val": null,
+    "error": null,
+    "note": "Line 36  }",
     "phase": "run"
   }
 ]
