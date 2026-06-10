@@ -735,33 +735,33 @@ def generate_video(
         enriched["structures"] = list(cumulative_structs.values())
         enriched_steps.append(enriched)
 
-    all_frames: list[np.ndarray] = []
 
-    # Intro (3 seconds)
-    title = _render_title_frame(language, mode, total_steps)
-    all_frames.extend([title] * (FPS * 3))
+    # ── Normalise every frame to exactly 1600x912 (W x H) ────────────────
+    def _norm(frame):
+        import numpy as _np
+        h, w = frame.shape[:2]
+        if h < 912:
+            frame = _np.vstack([frame, _np.zeros((912 - h, w, 3), dtype='uint8')])
+        elif h > 912:
+            frame = frame[:912]
+        h, w = frame.shape[:2]
+        if w < 1600:
+            frame = _np.hstack([frame, _np.zeros((h, 1600 - w, 3), dtype='uint8')])
+        elif w > 1600:
+            frame = frame[:, :1600]
+        return frame.astype('uint8')
+
+    all_frames = []
+
+    # Intro 3 seconds
+    all_frames.extend([_norm(_render_title_frame(language, mode, total_steps))] * (FPS * 3))
 
     # Step frames
     for step in enriched_steps:
-        frame = _render_frame(step, source_lines, total_steps)
-        # Crop/pad to exactly 912 height (handles DPI rounding)
-        h = frame.shape[0]
-        if h < 912:
-            pad = np.zeros((912 - h, frame.shape[1], 3), dtype=np.uint8)
-            frame = np.vstack([frame, pad])
-        elif h > 912:
-            frame = frame[:912]
-        all_frames.extend([frame] * HOLD_FRAMES)
+        all_frames.extend([_norm(_render_frame(step, source_lines, total_steps))] * HOLD_FRAMES)
 
-    # End frame (4 seconds)
-    end_frame = _render_end_frame(final_stdout, error)
-    h = end_frame.shape[0]
-    if h < 912:
-        end_frame = np.vstack([end_frame,
-                                np.zeros((912 - h, end_frame.shape[1], 3), dtype=np.uint8)])
-    elif h > 912:
-        end_frame = end_frame[:912]
-    all_frames.extend([end_frame] * (FPS * 4))
+    # End frame 4 seconds
+    all_frames.extend([_norm(_render_end_frame(final_stdout, error))] * (FPS * 4))
 
     iio.imwrite(
         output_path,
