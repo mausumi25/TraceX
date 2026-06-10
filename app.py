@@ -20,6 +20,13 @@ from components.input_parser import (
 from components.syntax_checker import check_syntax
 from components.video_renderer import generate_syntax_error_video
 from components.tracer import trace_python_code, steps_to_json
+from components.timeline_generator import (
+    generate_timeline, timeline_to_json, timeline_summary,
+    EV_LINE, EV_VAR_SET, EV_VAR_CHANGE,
+    EV_ARR_UPDATE, EV_ARR_APPEND, EV_ARR_POP,
+    EV_MATRIX_UPDATE, EV_LOOP_START, EV_LOOP_ITER, EV_LOOP_END,
+    EV_COND, EV_FUNC_CALL, EV_FUNC_RETURN, EV_OUTPUT, EV_FINAL,
+)
 from components.runtime_executor import (
     run_code, SUPPORTED_LANGUAGES,
     is_cpp_leetcode_style, parse_cpp_solution,
@@ -65,13 +72,14 @@ def _placeholder_for(param: str, hint: str) -> str:
     return name_map.get(param, f"value for {param}")
 
 for k, v in [
-    ("language",   "Python"),
-    ("exec_mode",  "Full Program"),
-    ("video_path", None),
-    ("trace_error", None),
-    ("leet_inputs", {}),          # raw user strings per param
-    ("leet_sig",    None),         # detected FunctionSignature
-    ("run_trigger", False),
+    ("language",        "Python"),
+    ("exec_mode",       "Full Program"),
+    ("video_path",      None),
+    ("trace_error",     None),
+    ("leet_inputs",     {}),
+    ("leet_sig",        None),
+    ("run_trigger",     False),
+    ("timeline_result", None),   # rich typed timeline from TimelineGenerator
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -544,20 +552,39 @@ if st.session_state.run_trigger:
             stdout_out = ""
 
             if lang == "Python":
-                st.write("Running Python tracer (sys.settrace)...")
+                st.write("🔵 Running Python tracer (sys.settrace)...")
                 try:
                     steps, error = trace_python_code(run_source, max_steps=500)
                     stdout_out = steps[-1]["stdout"] if steps else ""
-                    st.write(f"Captured **{len(steps)} execution steps**")
+                    st.write(f"✅ Captured **{len(steps)} execution steps**")
                 except Exception as exc:
                     st.error(f"Tracer failed: {exc}")
                     st.stop()
+
+                # ── Generate rich typed timeline (new) ────────
+                st.write("🟣 Building Execution Timeline...")
+                try:
+                    tl_result = generate_timeline(run_source, max_events=3000)
+                    st.session_state.timeline_result = tl_result
+                    ev_counts  = timeline_summary(tl_result)
+                    total_evs  = len(tl_result["timeline"])
+                    st.write(
+                        f"✅ Timeline: **{total_evs} events** — "
+                        + "  ".join(
+                            f"`{k}×{v}`"
+                            for k, v in sorted(ev_counts.items(), key=lambda x: -x[1])
+                            if k not in (EV_FINAL,)
+                        )
+                    )
+                except Exception as exc:
+                    import traceback as _tb
+                    st.warning(f"Timeline generation warning: {exc}")
+                    st.session_state.timeline_result = None
 
             else:
                 # C / C++ / Java / JavaScript via subprocess
                 st.write(f"Compiling and running {lang}...")
                 try:
-                    # Pass C++ user inputs if in LeetCode mode
                     cpp_inputs = None
                     if lang == "C++" and st.session_state.exec_mode == "LeetCode":
                         cpp_inputs = st.session_state.get("cpp_leet_inputs") or None
@@ -583,14 +610,22 @@ if st.session_state.run_trigger:
                     st.code(_tb.format_exc())
                     st.stop()
 
-            # ── Save JSON timeline ────────────────────────────
+            # ── Save rich timeline JSON ────────────────────────
             out_dir = os.path.join(os.path.dirname(__file__), "assets")
             os.makedirs(out_dir, exist_ok=True)
             timeline_path = os.path.join(out_dir, "timeline.json")
-            with open(timeline_path, "w", encoding="utf-8") as jf:
-                jf.write(steps_to_json(steps))
+            tl_result = st.session_state.get("timeline_result")
+            if tl_result:
+                with open(timeline_path, "w", encoding="utf-8") as jf:
+                    jf.write(timeline_to_json(tl_result))
+                total_evs = len(tl_result["timeline"])
+            else:
+                # Fallback: save old-style steps
+                with open(timeline_path, "w", encoding="utf-8") as jf:
+                    jf.write(steps_to_json(steps))
+                total_evs = len(steps)
             st.session_state.timeline_path = timeline_path
-            st.write(f"Timeline saved — {len(steps)} steps as JSON")
+            st.write(f"💾 Timeline saved — **{total_evs} events** → `assets/timeline.json`")
 
             # ── Step 2: Render Video ──────────────────────────
             st.write("Rendering video frames...")
@@ -673,41 +708,164 @@ if st.session_state.get("video_path") and os.path.exists(st.session_state.video_
             with st.expander("Error Details"):
                 st.code(st.session_state.trace_error, language="python")
 
-    # ── JSON Timeline Viewer ──────────────────────────────────
-    tpath = st.session_state.get("timeline_path", "")
-    if tpath and os.path.exists(tpath):
-        import json as _json
-        with open(tpath, "r", encoding="utf-8") as _jf:
-            _steps = _json.load(_jf)
+    # ── Execution Timeline Viewer ─────────────────────────────
+    _tl_result = st.session_state.get("timeline_result")
+    if _tl_result and _tl_result.get("timeline"):
+        _tl = _tl_result["timeline"]
+        _summary = timeline_summary(_tl_result)
+        _total   = len(_tl)
 
-        with st.expander(f"Execution Timeline — {len(_steps)} steps", expanded=False):
-            # Render as a clean table
-            rows = []
-            for s in _steps:
-                rows.append({
-                    "Step":      s.get("step", ""),
-                    "Line":      s.get("line", ""),
-                    "Event":     s.get("event", ""),
-                    "Note":      s.get("note", "")[:60],
-                    "Variables": ", ".join(
-                        f"{k}={v}" for k, v in list(s.get("variables", {}).items())[:4]
-                    ) or "—",
-                    "Loops":     ", ".join(
-                        f"{l['var']}={l['value']}" for l in s.get("loops", [])
-                    ) or "—",
-                    "Output":    (s.get("stdout", "") or "").strip().split("\n")[-1][:40] or "—",
+        # ── Event-type color map ──────────────────────────────
+        _EV_STYLE = {
+            EV_LINE         : ("📍", "#1e293b",  "#64748b"),   # icon, bg, text
+            EV_VAR_SET      : ("🟢", "#052e16",  "#4ade80"),
+            EV_VAR_CHANGE   : ("🟠", "#431407",  "#fb923c"),
+            EV_ARR_UPDATE   : ("🔵", "#0c1a4a",  "#60a5fa"),
+            EV_ARR_APPEND   : ("🔵", "#082f49",  "#38bdf8"),
+            EV_ARR_POP      : ("🔵", "#0c1a4a",  "#93c5fd"),
+            EV_MATRIX_UPDATE: ("🟡", "#422006",  "#fbbf24"),
+            EV_LOOP_START   : ("🔄", "#1a0a4a",  "#a78bfa"),
+            EV_LOOP_ITER    : ("🔄", "#130533",  "#c4b5fd"),
+            EV_LOOP_END     : ("🔄", "#1a0a4a",  "#7c3aed"),
+            EV_COND         : ("❓", "#1c1917",  "#d97706"),
+            EV_FUNC_CALL    : ("📞", "#0f172a",  "#818cf8"),
+            EV_FUNC_RETURN  : ("↩️", "#0f172a",  "#6ee7b7"),
+            EV_OUTPUT       : ("🖨️", "#052e16",  "#86efac"),
+            EV_FINAL        : ("🏁", "#0f172a",  "#f8fafc"),
+        }
+
+        with st.expander(
+            f"📊 Execution Timeline — {_total} events",
+            expanded=True,
+        ):
+            # ── Summary badges ────────────────────────────────
+            badge_html = ""
+            _BADGE_ORDER = [
+                EV_FUNC_CALL, EV_FUNC_RETURN,
+                EV_LOOP_START, EV_LOOP_ITER, EV_LOOP_END,
+                EV_COND,
+                EV_VAR_SET, EV_VAR_CHANGE,
+                EV_ARR_UPDATE, EV_ARR_APPEND, EV_ARR_POP,
+                EV_MATRIX_UPDATE,
+                EV_OUTPUT, EV_LINE,
+            ]
+            for ev_type in _BADGE_ORDER:
+                cnt = _summary.get(ev_type, 0)
+                if cnt == 0:
+                    continue
+                icon, bg, fg = _EV_STYLE.get(ev_type, ("•", "#1e293b", "#94a3b8"))
+                label = ev_type.replace("_", " ").title()
+                badge_html += (
+                    f'<span style="display:inline-block;margin:3px;padding:3px 10px;'
+                    f'border-radius:12px;background:{bg};color:{fg};'
+                    f'font-size:0.75rem;font-family:monospace;font-weight:600;">'
+                    f'{icon} {label}: {cnt}</span>'
+                )
+            st.markdown(
+                f'<div style="margin-bottom:12px">{badge_html}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Filter controls ───────────────────────────────
+            _fc1, _fc2 = st.columns([2, 1])
+            with _fc1:
+                _filter_types = st.multiselect(
+                    "Filter by event type",
+                    options=sorted(_summary.keys()),
+                    default=[t for t in _summary if t != EV_LINE],
+                    key="tl_filter",
+                )
+            with _fc2:
+                _max_rows = st.slider(
+                    "Max rows", 20, min(_total, 500), 100, key="tl_max"
+                )
+
+            # ── Build display rows ────────────────────────────
+            import json as _json
+            _rows = []
+            for ev in _tl:
+                ev_t = ev.get("event", "?")
+                if _filter_types and ev_t not in _filter_types:
+                    continue
+                icon, _bg, _fg = _EV_STYLE.get(ev_t, ("•", "", ""))
+
+                # Build a human description per event type
+                if ev_t == EV_LINE:
+                    desc = f"Line {ev.get('line','')}  `{ev.get('code','')[:60]}`"
+                elif ev_t == EV_VAR_SET:
+                    desc = f"`{ev['name']}` = `{ev['value'][:50]}`  ({ev['type']})"
+                elif ev_t == EV_VAR_CHANGE:
+                    desc = f"`{ev['name']}`:  `{ev.get('old_value','?')[:30]}` → `{ev.get('new_value','?')[:30]}`"
+                elif ev_t == EV_ARR_UPDATE:
+                    desc = f"`{ev['var']}[{ev['index']}]`:  `{ev['old_value']}` → `{ev['new_value']}`"
+                elif ev_t == EV_ARR_APPEND:
+                    desc = f"`{ev['var']}`.append(`{ev['value']}`)  → len={ev['new_len']}"
+                elif ev_t == EV_ARR_POP:
+                    desc = f"`{ev['var']}`.pop()  len {ev['old_len']} → {ev['new_len']}"
+                elif ev_t == EV_MATRIX_UPDATE:
+                    desc = f"`{ev['var']}[{ev['row']}][{ev['col']}]`:  `{ev['old_value']}` → `{ev['new_value']}`"
+                elif ev_t == EV_LOOP_START:
+                    desc = f"Loop `{ev.get('loop_var','?')}` in `{ev.get('iterable', ev.get('condition','?'))}` — line {ev.get('line','')}"
+                elif ev_t == EV_LOOP_ITER:
+                    desc = f"Iteration #{ev.get('iteration','?')} — `{ev.get('loop_var','?')}` = `{ev.get('value', ev.get('result','?'))}`"
+                elif ev_t == EV_LOOP_END:
+                    desc = f"Loop ended — {ev.get('iterations','?')} iterations"
+                elif ev_t == EV_COND:
+                    r = "✓ True" if ev.get("result") else "✗ False"
+                    desc = f"`{ev.get('expression','?')[:60]}` → **{r}**"
+                elif ev_t == EV_FUNC_CALL:
+                    args = ", ".join(f"{k}={v}" for k, v in ev.get("arguments", {}).items())
+                    desc = f"`{ev['function']}({args[:60]})`"
+                elif ev_t == EV_FUNC_RETURN:
+                    desc = f"`{ev['function']}` returned `{ev.get('value','?')[:50]}`"
+                elif ev_t == EV_OUTPUT:
+                    desc = f"stdout: `{ev.get('text','')[:80]}`"
+                elif ev_t == EV_FINAL:
+                    desc = f"stdout={ev.get('stdout','')!r}  error={ev.get('error','None')}"
+                else:
+                    desc = _json.dumps(
+                        {k: v for k, v in ev.items() if k not in ("seq", "event")},
+                        default=str
+                    )[:100]
+
+                _rows.append({
+                    "#"    : ev.get("seq", ""),
+                    "Type" : f"{icon} {ev_t}",
+                    "Detail": desc,
                 })
+                if len(_rows) >= _max_rows:
+                    break
 
-            import pandas as pd
+            # ── Render table ──────────────────────────────────
+            import pandas as _pd
             try:
+                _df = _pd.DataFrame(_rows)
                 st.dataframe(
-                    pd.DataFrame(rows),
+                    _df,
                     use_container_width=True,
                     hide_index=True,
+                    column_config={
+                        "#"    : st.column_config.NumberColumn("#", width="small"),
+                        "Type" : st.column_config.TextColumn("Event Type", width="medium"),
+                        "Detail": st.column_config.TextColumn("Detail", width="large"),
+                    },
                 )
             except Exception:
-                for row in rows[:50]:
-                    st.text(str(row))
+                for r in _rows[:50]:
+                    st.text(str(r))
+
+            # ── Download rich timeline JSON ────────────────────
+            _tpath = st.session_state.get("timeline_path", "")
+            if _tpath and os.path.exists(_tpath):
+                with open(_tpath, "r", encoding="utf-8") as _jf:
+                    st.download_button(
+                        label="⬇ Download timeline.json",
+                        data=_jf.read(),
+                        file_name="tracex_timeline.json",
+                        mime="application/json",
+                        use_container_width=True,
+                        key="dl_timeline_rich",
+                    )
 
 
 
